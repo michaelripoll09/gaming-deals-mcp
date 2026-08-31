@@ -2,20 +2,25 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { Application } from '../composition/root.js';
 import { wishlistEntrySchema } from '../domain/wishlist/types.js';
-import { runTool } from './tool-results.js';
+import { invalidInputResult, runTool } from './tool-results.js';
 
-const productVariantInputSchema = z.object({
+const productVariantInputSchema = safeInputSchema({
   productVariantId: z.string().uuid(),
-}).strict();
+});
 
-const wishlistCreateInputSchema = wishlistEntrySchema.pick({
-  productVariantId: true,
-  priority: true,
-  targetPrice: true,
-  notes: true,
-}).extend({
+const wishlistCreateInputSchema = safeInputSchema({
+  productVariantId: wishlistEntrySchema.shape.productVariantId,
+  priority: wishlistEntrySchema.shape.priority,
+  targetPrice: wishlistEntrySchema.shape.targetPrice,
+  notes: wishlistEntrySchema.shape.notes,
   now: z.string().datetime(),
-}).strict();
+});
+
+const catalogSearchInputSchema = safeInputSchema({ query: z.string().trim().min(1) });
+const providerSyncInputSchema = safeInputSchema({ observedAt: z.string().datetime() });
+const wishlistListInputSchema = safeInputSchema({});
+const wishlistUpdateInputSchema = safeInputSchema(wishlistEntrySchema.shape);
+const wishlistRemoveInputSchema = safeInputSchema({ wishlistEntryId: z.string().uuid() });
 
 const localReadOnlyAnnotations = {
   readOnlyHint: true,
@@ -36,57 +41,82 @@ export function createMcpServer(application: Application): McpServer {
 
   server.registerTool('catalog_search', {
     description: 'Searches the canonical gaming catalog.',
-    inputSchema: z.object({ query: z.string().trim().min(1) }).strict(),
+    inputSchema: catalogSearchInputSchema,
     annotations: localReadOnlyAnnotations,
-  }, ({ query }) => runTool(() => application.searchCatalog(query)));
+  }, (input) => runValidatedTool(input, ({ query }) => application.searchCatalog(query)));
 
   server.registerTool('provider_sync_deterministic', {
     description: 'Synchronizes the deterministic local deal provider.',
-    inputSchema: z.object({ observedAt: z.string().datetime() }).strict(),
+    inputSchema: providerSyncInputSchema,
     annotations: { ...localMutationAnnotations, idempotentHint: true },
-  }, ({ observedAt }) => runTool(() => application.syncDeterministicProvider(observedAt)));
+  }, (input) => runValidatedTool(input, ({ observedAt }) => application.syncDeterministicProvider(observedAt)));
 
   server.registerTool('deal_compare_product', {
     description: 'Compares verified offers for a product variant.',
     inputSchema: productVariantInputSchema,
     annotations: localReadOnlyAnnotations,
-  }, ({ productVariantId }) => runTool(() => application.compareProductVariant(productVariantId)));
+  }, (input) => runValidatedTool(input, ({ productVariantId }) => application.compareProductVariant(productVariantId)));
 
   server.registerTool('deal_get_best_offer', {
     description: 'Gets the best eligible offer for a product variant.',
     inputSchema: productVariantInputSchema,
     annotations: localReadOnlyAnnotations,
-  }, ({ productVariantId }) => runTool(() => application.compareProductVariant(productVariantId)));
+  }, (input) => runValidatedTool(input, ({ productVariantId }) => application.compareProductVariant(productVariantId)));
 
   server.registerTool('deal_get_price_history', {
     description: 'Gets immutable price observations for a product variant.',
     inputSchema: productVariantInputSchema,
     annotations: localReadOnlyAnnotations,
-  }, ({ productVariantId }) => runTool(() => application.listPriceHistory(productVariantId)));
+  }, (input) => runValidatedTool(input, ({ productVariantId }) => application.listPriceHistory(productVariantId)));
 
   server.registerTool('wishlist_create', {
     description: 'Creates a local wishlist entry.',
     inputSchema: wishlistCreateInputSchema,
     annotations: localMutationAnnotations,
-  }, (input) => runTool(() => application.createWishlistEntry(input)));
+  }, (input) => runValidatedTool(input, (entry) => application.createWishlistEntry(entry)));
 
   server.registerTool('wishlist_list', {
     description: 'Lists local wishlist entries.',
-    inputSchema: z.object({}).strict(),
+    inputSchema: wishlistListInputSchema,
     annotations: localReadOnlyAnnotations,
-  }, () => runTool(() => application.listWishlistEntries()));
+  }, (input) => runValidatedTool(input, () => application.listWishlistEntries()));
 
   server.registerTool('wishlist_update', {
     description: 'Updates an existing local wishlist entry.',
-    inputSchema: wishlistEntrySchema,
+    inputSchema: wishlistUpdateInputSchema,
     annotations: { ...localMutationAnnotations, idempotentHint: true },
-  }, (entry) => runTool(() => application.updateWishlistEntry(entry)));
+  }, (input) => runValidatedTool(input, (entry) => application.updateWishlistEntry(entry)));
 
   server.registerTool('wishlist_remove', {
     description: 'Removes a local wishlist entry.',
-    inputSchema: z.object({ wishlistEntryId: z.string().uuid() }).strict(),
+    inputSchema: wishlistRemoveInputSchema,
     annotations: { ...localMutationAnnotations, destructiveHint: true, idempotentHint: true },
-  }, ({ wishlistEntryId }) => runTool(() => application.removeWishlistEntry(wishlistEntryId)));
+  }, (input) => runValidatedTool(input, ({ wishlistEntryId }) => application.removeWishlistEntry(wishlistEntryId)));
 
   return server;
+}
+
+const invalidInputMarker = Symbol('invalid-input');
+
+function safeInputSchema<Shape extends z.ZodRawShape>(shape: Shape) {
+  // Preserve the strict input schema advertised to MCP clients while routing malformed values to this adapter.
+  const protectedShape = Object.fromEntries(Object.entries(shape).map(([name, schema]) => [
+    name,
+    (schema as unknown as z.ZodType).catch(() => invalidInputMarker as never),
+  ])) as unknown as Shape;
+
+  return z.object(protectedShape)
+    .catchall(z.never().catch(() => invalidInputMarker as never))
+    .meta({ additionalProperties: false });
+}
+
+function runValidatedTool<T extends object>(
+  input: T,
+  operation: (input: T) => Promise<unknown>,
+) {
+  return containsInvalidInput(input) ? Promise.resolve(invalidInputResult()) : runTool(() => operation(input));
+}
+
+function containsInvalidInput(input: object): boolean {
+  return Object.values(input).some((value) => value === invalidInputMarker);
 }

@@ -21,6 +21,10 @@ export function errorResult(error: unknown): CallToolResult {
   };
 }
 
+export function invalidInputResult(): CallToolResult {
+  return errorResult(undefined);
+}
+
 export async function runTool<T>(operation: () => Promise<T>): Promise<CallToolResult> {
   try {
     return successResult(await operation());

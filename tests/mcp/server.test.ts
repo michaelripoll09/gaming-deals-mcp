@@ -33,6 +33,12 @@ describe('Gaming Deals MCP server', () => {
       expect(toolByName(tools.tools, 'wishlist_remove').annotations).toMatchObject({
         readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false,
       });
+      expect(toolByName(tools.tools, 'deal_get_best_offer').inputSchema).toMatchObject({
+        type: 'object',
+        required: ['productVariantId'],
+        additionalProperties: false,
+        properties: { productVariantId: { type: 'string', format: 'uuid' } },
+      });
     });
   });
 
@@ -105,13 +111,36 @@ describe('Gaming Deals MCP server', () => {
     });
   });
 
-  test('rejects malformed inputs at the MCP boundary', async () => {
+  test('normalizes malformed MCP input into the safe public error envelope', async () => {
     await withClient(createApplicationForTest(), async (client) => {
       const result = await client.callTool({
-        name: 'deal_get_best_offer', arguments: { productVariantId: 'not-a-uuid' },
+        name: 'deal_get_best_offer',
+        arguments: { productVariantId: 'C:\\Users\\michael\\secret-value' },
       });
 
       expect(result.isError).toBe(true);
+      expect(result.structuredContent).toEqual({ code: 'internal_error', message: 'An unexpected error occurred' });
+      expect(result.content).toEqual([{
+        type: 'text', text: '{"code":"internal_error","message":"An unexpected error occurred"}',
+      }]);
+      expect(JSON.stringify(result)).not.toContain('C:\\Users\\');
+      expect(JSON.stringify(result)).not.toContain('secret-value');
+      expect(JSON.stringify(result)).not.toContain('Input validation error');
+      expect(JSON.stringify(result)).not.toContain('Invalid UUID');
+
+      const unexpectedProperty = await client.callTool({
+        name: 'deal_get_best_offer',
+        arguments: { productVariantId, rawInput: 'C:\\Users\\michael\\secret-value' },
+      });
+      expect(unexpectedProperty.isError).toBe(true);
+      expect(unexpectedProperty.structuredContent).toEqual({
+        code: 'internal_error', message: 'An unexpected error occurred',
+      });
+      expect(unexpectedProperty.content).toEqual([{
+        type: 'text', text: '{"code":"internal_error","message":"An unexpected error occurred"}',
+      }]);
+      expect(JSON.stringify(unexpectedProperty)).not.toContain('C:\\Users\\');
+      expect(JSON.stringify(unexpectedProperty)).not.toContain('secret-value');
     });
   });
 

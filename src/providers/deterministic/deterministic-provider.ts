@@ -3,9 +3,11 @@ import {
   providerCapabilitySchema,
   type DealProvider,
 } from '../../domain/providers/contracts.js';
-import { deterministicSyncFixture } from './fixtures.js';
+import { createDeterministicSyncFixture } from './fixtures.js';
 
 export class DeterministicDealProvider implements DealProvider {
+  constructor(private readonly fixtureFactory: () => unknown = createDeterministicSyncFixture) {}
+
   readonly capability: DealProvider['capability'] = providerCapabilitySchema.parse({
     providerId: 'deterministic',
     displayName: 'Deterministic Fixture Provider',
@@ -17,6 +19,6 @@ export class DeterministicDealProvider implements DealProvider {
   });
 
   async sync(_input: { country: string; comparisonCurrency: string; now: string }): Promise<unknown> {
-    return normalizedProviderSyncSchema.parse(deterministicSyncFixture);
+    return normalizedProviderSyncSchema.parse(this.fixtureFactory());
   }
 }

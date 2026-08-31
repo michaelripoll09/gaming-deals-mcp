@@ -1,10 +1,12 @@
+import type { NormalizedProviderSync } from '../../domain/providers/contracts.js';
+
 /**
  * Stable, network-free provider data used as the contract reference fixture.
  *
  * The literal `as const` keeps this fixture immutable at compile time. The
  * provider validates it at its normalized boundary before exposing a result.
  */
-export const deterministicSyncFixture = {
+const deterministicSyncFixture = {
   catalog: [
     {
       game: {
@@ -132,3 +134,8 @@ export const deterministicSyncFixture = {
     },
   ],
 } as const;
+
+/** Return an isolated copy so callers cannot mutate the private source fixture. */
+export function createDeterministicSyncFixture(): NormalizedProviderSync {
+  return structuredClone(deterministicSyncFixture) as unknown as NormalizedProviderSync;
+}

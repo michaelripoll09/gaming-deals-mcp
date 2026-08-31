@@ -12,7 +12,7 @@ export const wishlistEntrySchema = z.object({
   notes: nullableNotesSchema,
   createdAt: z.iso.datetime({ offset: true }),
   updatedAt: z.iso.datetime({ offset: true }),
-});
+}).strict();
 
 export type WishlistPriority = z.infer<typeof wishlistPrioritySchema>;
 export type WishlistEntry = z.infer<typeof wishlistEntrySchema>;

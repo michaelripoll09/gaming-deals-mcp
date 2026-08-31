@@ -15,7 +15,7 @@ export const isoTimestampSchema = z.iso.datetime({ offset: true });
 export const moneySchema = z.object({
   amountMinor: z.number().int().nonnegative(),
   currency: currencySchema,
-});
+}).strict();
 
 export const providerListingSchema = z.object({
   id: z.uuid(),
@@ -23,7 +23,7 @@ export const providerListingSchema = z.object({
   providerProductId: z.string().trim().min(1),
   productVariantId: z.uuid().nullable(),
   mappingState: mappingStateSchema,
-});
+}).strict();
 
 const httpsUrlSchema = z.url().refine((value) => {
   try {
@@ -49,7 +49,7 @@ export const offerSchema = z.object({
   taxesKnown: z.boolean(),
   destinationUrl: httpsUrlSchema,
   observedAt: isoTimestampSchema,
-});
+}).strict();
 
 export const priceObservationSchema = z.object({
   id: z.uuid(),
@@ -59,7 +59,7 @@ export const priceObservationSchema = z.object({
   originalPrice: moneySchema,
   normalizedPrice: moneySchema.nullable(),
   observedAt: isoTimestampSchema,
-});
+}).strict();
 
 export type MappingState = z.infer<typeof mappingStateSchema>;
 export type RegionStatus = z.infer<typeof regionStatusSchema>;

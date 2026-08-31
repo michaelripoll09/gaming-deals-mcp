@@ -1,0 +1,18 @@
+{
+  "name": "gaming-deals-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22.13.0", "pnpm": ">=10.0.0" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "start": "node dist/cli/main.js",
+    "mcp": "node dist/cli/main.js mcp",
+    "doctor": "node dist/cli/main.js doctor"
+  },
+  "dependencies": { "@modelcontextprotocol/sdk": "1.30.0", "zod": "4.5.4" },
+  "devDependencies": { "@types/node": "22.20.0", "typescript": "5.9.3", "vitest": "4.1.11" }
+}

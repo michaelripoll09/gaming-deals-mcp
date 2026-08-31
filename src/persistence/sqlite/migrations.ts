@@ -15,6 +15,7 @@ interface AppliedMigration {
 
 const migrations: readonly Migration[] = [
   createMigration(1, new URL('./migrations/001_initial.sql', import.meta.url)),
+  createMigration(2, new URL('./migrations/002_contract_alignment.sql', import.meta.url)),
 ];
 
 export function applyMigrations(database: DatabaseSync): void {

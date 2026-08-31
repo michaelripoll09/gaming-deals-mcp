@@ -12,15 +12,16 @@ describe('openDatabase', () => {
     try {
       const first = openDatabase(temporaryDatabase.path);
       try {
-        expect(first.database.prepare('SELECT version FROM schema_migrations').all()).toEqual([{ version: 1 }]);
+        expect(first.database.prepare('SELECT version FROM schema_migrations ORDER BY version').all())
+          .toEqual([{ version: 1 }, { version: 2 }]);
       } finally {
         first.close();
       }
 
       const second = openDatabase(temporaryDatabase.path);
       try {
-        expect(second.database.prepare('SELECT name FROM sqlite_master WHERE type = ? AND name = ?')
-          .get('table', 'wishlist_entries')).toEqual({ name: 'wishlist_entries' });
+        expect(second.database.prepare('SELECT version FROM schema_migrations ORDER BY version').all())
+          .toEqual([{ version: 1 }, { version: 2 }]);
       } finally {
         second.close();
       }

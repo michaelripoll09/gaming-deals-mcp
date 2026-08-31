@@ -32,6 +32,19 @@ function seedVersionOneGraph(database: DatabaseSync): void {
   `);
 }
 
+function seedFreshOfferGraph(database: DatabaseSync): void {
+  database.exec(`
+    INSERT INTO games VALUES ('30000000-0000-4000-8000-000000000001', 'Fresh Graph', 'fresh graph', '2026-08-30T00:00:00.000Z');
+    INSERT INTO releases VALUES ('30000000-0000-4000-8000-000000000002', '30000000-0000-4000-8000-000000000001', 'Fresh Graph', NULL, '2026-08-30T00:00:00.000Z');
+    INSERT INTO editions VALUES ('30000000-0000-4000-8000-000000000003', '30000000-0000-4000-8000-000000000002', 'Standard', '2026-08-30T00:00:00.000Z');
+    INSERT INTO product_variants (id, edition_id, platform, distribution_channel, created_at, region_code)
+      VALUES ('30000000-0000-4000-8000-000000000004', '30000000-0000-4000-8000-000000000003', 'pc', 'digital_storefront', '2026-08-30T00:00:00.000Z', NULL);
+    INSERT INTO provider_listings VALUES ('30000000-0000-4000-8000-000000000005', 'fresh-provider', 'fresh-product', '30000000-0000-4000-8000-000000000004', 'verified');
+    INSERT INTO offers (id, provider_listing_id, country, original_currency, original_amount_minor, product_url, available, observed_at)
+      VALUES ('30000000-0000-4000-8000-000000000006', '30000000-0000-4000-8000-000000000005', 'CO', 'COP', 1, 'https://example.test/fresh', 1, '2026-08-30T00:00:00.000Z');
+  `);
+}
+
 describe('contract alignment migration', () => {
   test('migrates a fresh database to version two with every Task 3 field', () => {
     const temporaryDatabase = createTemporaryDatabase();
@@ -175,7 +188,7 @@ describe('contract alignment migration', () => {
         INSERT INTO releases VALUES ('10000000-0000-4000-8000-000000000002', '10000000-0000-4000-8000-000000000001', 'Round Trip', NULL, '2026-08-30T00:00:00.000Z');
         INSERT INTO editions VALUES ('10000000-0000-4000-8000-000000000003', '10000000-0000-4000-8000-000000000002', 'Standard', '2026-08-30T00:00:00.000Z');
         INSERT INTO product_variants (id, edition_id, platform, distribution_channel, created_at, region_code)
-          VALUES ('10000000-0000-4000-8000-000000000004', '10000000-0000-4000-8000-000000000003', 'pc', 'digital_storefront', '2026-08-30T00:00:00.000Z', NULL);
+          VALUES ('10000000-0000-4000-8000-000000000004', '10000000-0000-4000-8000-000000000003', 'pc', 'digital_storefront', '2026-08-30T00:00:00.000Z', 'global');
         INSERT INTO provider_listings VALUES ('10000000-0000-4000-8000-000000000005', 'provider', 'product', '10000000-0000-4000-8000-000000000004', 'verified');
         INSERT INTO offers (
           id, provider_listing_id, country, original_currency, original_amount_minor, product_url, available, observed_at,
@@ -207,7 +220,7 @@ describe('contract alignment migration', () => {
         JOIN product_variants ON product_variants.id = provider_listings.product_variant_id
         JOIN wishlist_entries ON wishlist_entries.product_variant_id = product_variants.id
       `).get()).toEqual({
-        region_code: null, source_observation_key: 'provider:observation:1', normalized_amount_minor: 1300,
+        region_code: 'global', source_observation_key: 'provider:observation:1', normalized_amount_minor: 1300,
         normalized_currency: 'USD', normalized_final_amount_minor: 1100, normalized_final_currency: 'USD',
         exchange_rate_source: 'ecb', converted_at: '2026-08-30T00:01:00.000Z', region_status: 'compatible',
         retailer_class: 'authorized_store', source_confidence: 'high', shipping_known: 1, taxes_known: 0,
@@ -225,6 +238,31 @@ describe('contract alignment migration', () => {
         target_currency: null,
         notes: 'Wishlist note',
       });
+
+      opened.database.prepare('UPDATE product_variants SET region_code = NULL WHERE id = ?')
+        .run('10000000-0000-4000-8000-000000000004');
+      expect(opened.database.prepare(
+        'SELECT region_code FROM product_variants WHERE id = ?',
+      ).get('10000000-0000-4000-8000-000000000004')).toEqual({ region_code: null });
+    } finally {
+      opened.close();
+      temporaryDatabase.cleanup();
+    }
+  });
+
+  test('rejects a price observation with only one normalized money component', () => {
+    const temporaryDatabase = createTemporaryDatabase();
+    const opened = openDatabase(temporaryDatabase.path);
+
+    try {
+      seedFreshOfferGraph(opened.database);
+      expect(() => opened.database.exec(`
+        INSERT INTO price_observations VALUES (
+          '30000000-0000-4000-8000-000000000007', '30000000-0000-4000-8000-000000000006',
+          '30000000-0000-4000-8000-000000000005', 'partial-normalized', 1, 'COP', 1, NULL,
+          '2026-08-30T00:00:00.000Z'
+        );
+      `)).toThrow(/CHECK constraint failed/);
     } finally {
       opened.close();
       temporaryDatabase.cleanup();

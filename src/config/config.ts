@@ -1,8 +1,8 @@
 import { z } from 'zod';
 
 const environmentSchema = z.object({
-  GAMING_DEALS_COUNTRY: z.string().default('CO').transform((value) => value.toUpperCase()),
-  GAMING_DEALS_COMPARISON_CURRENCY: z.string().length(3).default('COP').transform((value) => value.toUpperCase()),
+  GAMING_DEALS_COUNTRY: z.string().regex(/^[A-Za-z]{2}$/).default('CO').transform((value) => value.toUpperCase()),
+  GAMING_DEALS_COMPARISON_CURRENCY: z.string().regex(/^[A-Za-z]{3}$/).default('COP').transform((value) => value.toUpperCase()),
   GAMING_DEALS_DATABASE_PATH: z.string().min(1),
   GAMING_DEALS_PROVIDER_API_KEY: z.string().optional(),
 });

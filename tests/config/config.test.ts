@@ -13,4 +13,26 @@ describe('loadConfig', () => {
       GAMING_DEALS_COMPARISON_CURRENCY: 'COPP',
     })).toThrow('Invalid configuration');
   });
+
+  test('normalizes lowercase country and comparison currency', () => {
+    expect(loadConfig({
+      GAMING_DEALS_COUNTRY: 'co',
+      GAMING_DEALS_COMPARISON_CURRENCY: 'cop',
+      GAMING_DEALS_DATABASE_PATH: 'C:/tmp/deals.sqlite',
+    })).toMatchObject({ country: 'CO', comparisonCurrency: 'COP' });
+  });
+
+  test('rejects malformed or empty country and comparison currency codes', () => {
+    expect(() => loadConfig({
+      GAMING_DEALS_COUNTRY: '$$',
+      GAMING_DEALS_COMPARISON_CURRENCY: '12!',
+      GAMING_DEALS_DATABASE_PATH: 'C:/tmp/deals.sqlite',
+    })).toThrow('Invalid configuration');
+
+    expect(() => loadConfig({
+      GAMING_DEALS_COUNTRY: '',
+      GAMING_DEALS_COMPARISON_CURRENCY: '',
+      GAMING_DEALS_DATABASE_PATH: 'C:/tmp/deals.sqlite',
+    })).toThrow('Invalid configuration');
+  });
 });

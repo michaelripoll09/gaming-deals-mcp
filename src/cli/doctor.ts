@@ -1,13 +1,28 @@
 import { loadConfig } from '../config/config.js';
-import { normalizedProviderSyncSchema, providerCapabilitySchema } from '../domain/providers/contracts.js';
+import {
+  normalizedProviderSyncSchema,
+  providerCapabilitySchema,
+  type DealProvider,
+} from '../domain/providers/contracts.js';
 import { PublicError, toPublicError } from '../errors/public-error.js';
 import { openDatabase, type OpenDatabase } from '../persistence/sqlite/database.js';
 import { DeterministicDealProvider } from '../providers/deterministic/deterministic-provider.js';
 
+export interface DoctorDependencies {
+  openDatabase?: typeof openDatabase;
+  createDeterministicProvider?: () => DealProvider;
+}
+
 export async function runDoctor(input: {
   environment: NodeJS.ProcessEnv;
   stdout: (line: string) => void;
+  dependencies?: DoctorDependencies;
 }): Promise<'healthy' | 'unhealthy'> {
+  const dependencies = {
+    openDatabase,
+    createDeterministicProvider: () => new DeterministicDealProvider(),
+    ...input.dependencies,
+  };
   const config = parseConfiguration(input.environment);
   if (config === undefined) {
     input.stdout('configuration: unhealthy (invalid_configuration)');
@@ -17,7 +32,7 @@ export async function runDoctor(input: {
 
   let opened: OpenDatabase | undefined;
   try {
-    opened = openStorage(config.databasePath);
+    opened = openStorage(config.databasePath, dependencies.openDatabase);
   } catch (error) {
     return reportFailure(input.stdout, 'sqlite', error);
   }
@@ -44,6 +59,7 @@ export async function runDoctor(input: {
     await checkDeterministicProvider({
       country: config.country,
       comparisonCurrency: config.comparisonCurrency,
+      createProvider: dependencies.createDeterministicProvider,
     });
   } catch (error) {
     return reportFailure(input.stdout, 'deterministic_provider', error);
@@ -61,9 +77,9 @@ function parseConfiguration(environment: NodeJS.ProcessEnv) {
   }
 }
 
-function openStorage(databasePath: string): OpenDatabase {
+function openStorage(databasePath: string, open: typeof openDatabase): OpenDatabase {
   try {
-    return openDatabase(databasePath);
+    return open(databasePath);
   } catch (error) {
     throw new PublicError('persistence_failure', 'Persistent storage is unavailable', error);
   }
@@ -109,9 +125,10 @@ function probeStorage(opened: OpenDatabase): void {
 async function checkDeterministicProvider(input: {
   country: string;
   comparisonCurrency: string;
+  createProvider: () => DealProvider;
 }): Promise<void> {
   try {
-    const provider = new DeterministicDealProvider();
+    const provider = input.createProvider();
     if (!providerCapabilitySchema.safeParse(provider.capability).success) {
       throw new Error('Doctor provider capability is invalid');
     }

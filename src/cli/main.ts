@@ -66,6 +66,7 @@ export async function startMcp(
   const stdin = dependencies.stdin ?? process.stdin;
   const signals = dependencies.signals ?? process;
   let connected = false;
+  let serverClosed = false;
   let connection: Promise<void> | undefined;
   let cleanupPromise: Promise<void> | undefined;
 
@@ -78,7 +79,7 @@ export async function startMcp(
 
         try {
           await connection?.catch(() => undefined);
-          if (connected) {
+          if (connected && !serverClosed) {
             await server.close();
           }
         } finally {
@@ -95,7 +96,10 @@ export async function startMcp(
     void cleanup();
   };
 
-  server.server.onclose = onEnd;
+  server.server.onclose = () => {
+    serverClosed = true;
+    void cleanup();
+  };
   stdin.once('end', onEnd);
   signals.on('SIGINT', onSignal);
   signals.on('SIGTERM', onSignal);

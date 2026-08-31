@@ -60,7 +60,7 @@ describe('runCli', () => {
 });
 
 describe('startMcp lifecycle', () => {
-  test('closes resources when stdin ends while connection is pending', async () => {
+  test('closes each owned resource once when stdin ends while connection is pending', async () => {
     const runtime = createRuntime({ pendingConnect: true });
     const started = startMcp(doctorEnvironment(), runtime.dependencies);
 
@@ -68,46 +68,51 @@ describe('startMcp lifecycle', () => {
     runtime.resolveConnect();
     await started;
 
-    expect(runtime.state).toEqual({ applicationClosed: true, serverClosed: true });
-    expect(runtime.stdin.listenerCount('end')).toBe(0);
-    expect(runtime.signals.listenerCount('SIGINT')).toBe(0);
-    expect(runtime.signals.listenerCount('SIGTERM')).toBe(0);
+    expectCleaned(runtime, { applicationCloseCalls: 1, serverCloseCalls: 1 });
   });
 
-  test('closes resources when SIGTERM arrives after connection', async () => {
+  test.each(['SIGINT', 'SIGTERM'])('closes each owned resource once when %s arrives after connection', async (signal) => {
     const runtime = createRuntime({ pendingConnect: false });
     await startMcp(doctorEnvironment(), runtime.dependencies);
 
+    runtime.signals.emit(signal);
+    await waitFor(() => runtime.state.applicationCloseCalls === 1 && runtime.state.serverCloseCalls === 1);
+
+    expectCleaned(runtime, { applicationCloseCalls: 1, serverCloseCalls: 1 });
+  });
+
+  test('closes the application once when the connected server closes', async () => {
+    const runtime = createRuntime({ pendingConnect: false });
+    await startMcp(doctorEnvironment(), runtime.dependencies);
+
+    await runtime.closeServer();
+    await waitFor(() => runtime.state.applicationCloseCalls === 1);
+
+    expectCleaned(runtime, { applicationCloseCalls: 1, serverCloseCalls: 1 });
+  });
+
+  test('completes overlapping EOF, signal, and server-close cleanup without duplicate closes', async () => {
+    const runtime = createRuntime({ pendingConnect: false });
+    await startMcp(doctorEnvironment(), runtime.dependencies);
+
+    const serverClose = runtime.closeServer();
+    runtime.stdin.emit('end');
+    runtime.signals.emit('SIGINT');
     runtime.signals.emit('SIGTERM');
-    await waitFor(() => runtime.state.applicationClosed && runtime.state.serverClosed);
+    await Promise.race([
+      Promise.all([serverClose, waitFor(() => runtime.state.applicationCloseCalls === 1)]),
+      timeout(),
+    ]);
 
-    expect(runtime.state).toEqual({ applicationClosed: true, serverClosed: true });
-    expect(runtime.stdin.listenerCount('end')).toBe(0);
-    expect(runtime.signals.listenerCount('SIGINT')).toBe(0);
-    expect(runtime.signals.listenerCount('SIGTERM')).toBe(0);
-  });
-  test('closes the application when the connected server closes', async () => {
-    const runtime = createRuntime({ pendingConnect: false });
-    await startMcp(doctorEnvironment(), runtime.dependencies);
-
-    runtime.serverClosed();
-    await waitFor(() => runtime.state.applicationClosed);
-
-    expect(runtime.state).toEqual({ applicationClosed: true, serverClosed: true });
-    expect(runtime.stdin.listenerCount('end')).toBe(0);
-    expect(runtime.signals.listenerCount('SIGINT')).toBe(0);
-    expect(runtime.signals.listenerCount('SIGTERM')).toBe(0);
+    expectCleaned(runtime, { applicationCloseCalls: 1, serverCloseCalls: 1 });
   });
 
-  test('closes application and removes lifecycle listeners after a connection error', async () => {
+  test('closes application once and removes lifecycle listeners after a connection error', async () => {
     const runtime = createRuntime({ connectError: new Error('raw connect error') });
 
     await expect(startMcp(doctorEnvironment(), runtime.dependencies)).rejects.toThrow('raw connect error');
 
-    expect(runtime.state).toEqual({ applicationClosed: true, serverClosed: false });
-    expect(runtime.stdin.listenerCount('end')).toBe(0);
-    expect(runtime.signals.listenerCount('SIGINT')).toBe(0);
-    expect(runtime.signals.listenerCount('SIGTERM')).toBe(0);
+    expectCleaned(runtime, { applicationCloseCalls: 1, serverCloseCalls: 0 });
   });
 });
 
@@ -118,7 +123,7 @@ function doctorEnvironment(): NodeJS.ProcessEnv {
 function createRuntime(input: { pendingConnect: boolean; connectError?: Error }) {
   const stdin = new EventEmitter();
   const signals = new EventEmitter();
-  const state = { applicationClosed: false, serverClosed: false };
+  const state = { applicationCloseCalls: 0, serverCloseCalls: 0 };
   let resolveConnect = () => undefined;
   const connection = new Promise<void>((resolve, reject) => {
     resolveConnect = resolve;
@@ -131,7 +136,7 @@ function createRuntime(input: { pendingConnect: boolean; connectError?: Error })
   const server = {
     server: { onclose: undefined as (() => void) | undefined },
     close: async () => {
-      state.serverClosed = true;
+      state.serverCloseCalls += 1;
       server.server.onclose?.();
     },
     connect: async () => connection,
@@ -141,19 +146,26 @@ function createRuntime(input: { pendingConnect: boolean; connectError?: Error })
     dependencies: {
       stdin,
       signals,
-      createApplication: () => ({ close: () => { state.applicationClosed = true; } }),
+      createApplication: () => ({ close: () => { state.applicationCloseCalls += 1; } }),
       createMcpServer: () => server,
       createTransport: () => ({}),
     },
     resolveConnect,
-    serverClosed: () => {
-      state.serverClosed = true;
-      server.server.onclose?.();
-    },
+    closeServer: server.close,
     signals,
     state,
     stdin,
   };
+}
+
+function expectCleaned(
+  runtime: ReturnType<typeof createRuntime>,
+  expected: { applicationCloseCalls: number; serverCloseCalls: number },
+): void {
+  expect(runtime.state).toEqual(expected);
+  expect(runtime.stdin.listenerCount('end')).toBe(0);
+  expect(runtime.signals.listenerCount('SIGINT')).toBe(0);
+  expect(runtime.signals.listenerCount('SIGTERM')).toBe(0);
 }
 
 async function waitFor(predicate: () => boolean): Promise<void> {
@@ -164,4 +176,10 @@ async function waitFor(predicate: () => boolean): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 0));
   }
   throw new Error('Lifecycle did not finish');
+}
+
+function timeout(): Promise<never> {
+  return new Promise((_, reject) => {
+    setTimeout(() => reject(new Error('Lifecycle cleanup deadlocked')), 1000);
+  });
 }

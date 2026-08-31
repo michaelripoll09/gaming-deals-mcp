@@ -89,18 +89,29 @@ describe('DeterministicDealProvider', () => {
       country: 'CO', comparisonCurrency: 'COP', now: '2026-08-30T00:00:00.000Z',
     }));
     const listingsById = new Map(result.listings.map((listing) => [listing.id, listing]));
+    const variantsById = new Map(result.catalog.map((entry) => [entry.productVariant.id, entry.productVariant]));
 
     const compatibleOffer = result.offers.find((offer) => offer.regionStatus === 'compatible');
     const incompatibleOffer = result.offers.find((offer) => offer.regionStatus === 'incompatible');
     const unknownOffer = result.offers.find((offer) => offer.regionStatus === 'unknown');
-    expect(compatibleOffer && listingsById.get(compatibleOffer.providerListingId)).toMatchObject({
-      mappingState: 'verified', productVariantId: result.catalog[0].productVariant.id,
+    const compatibleListing = compatibleOffer ? listingsById.get(compatibleOffer.providerListingId) : undefined;
+    const incompatibleListing = incompatibleOffer ? listingsById.get(incompatibleOffer.providerListingId) : undefined;
+    const unknownListing = unknownOffer ? listingsById.get(unknownOffer.providerListingId) : undefined;
+    const compatibleVariant = compatibleListing?.productVariantId
+      ? variantsById.get(compatibleListing.productVariantId)
+      : undefined;
+    const incompatibleVariant = incompatibleListing?.productVariantId
+      ? variantsById.get(incompatibleListing.productVariantId)
+      : undefined;
+
+    expect(compatibleListing).toMatchObject({ mappingState: 'verified' });
+    expect(compatibleVariant).toMatchObject({
+      regionCode: 'CO', platform: 'pc', distribution: 'digital_storefront',
     });
-    expect(incompatibleOffer && listingsById.get(incompatibleOffer.providerListingId)).toMatchObject({
-      mappingState: 'verified', productVariantId: result.catalog[1].productVariant.id,
+    expect(incompatibleListing).toMatchObject({ mappingState: 'verified' });
+    expect(incompatibleVariant).toMatchObject({
+      regionCode: 'US', platform: 'pc', distribution: 'digital_storefront',
     });
-    expect(unknownOffer && listingsById.get(unknownOffer.providerListingId)).toMatchObject({
-      mappingState: 'ambiguous', productVariantId: null,
-    });
+    expect(unknownListing).toMatchObject({ mappingState: 'ambiguous', productVariantId: null });
   });
 });

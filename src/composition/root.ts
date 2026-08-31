@@ -9,9 +9,9 @@ import { syncProvider } from '../application/sync-provider.js';
 import { WishlistService, type CreateWishlistEntryInput } from '../application/wishlist-service.js';
 import { openDatabase } from '../persistence/sqlite/database.js';
 import {
+  createSqliteTransactionRunner,
   SqliteCatalogRepository,
   SqliteOfferRepository,
-  SqliteTransactionManager,
   SqliteWishlistRepository,
 } from '../persistence/sqlite/repositories.js';
 import { DeterministicDealProvider } from '../providers/deterministic/deterministic-provider.js';
@@ -49,9 +49,9 @@ export function createApplication(input: {
   }
 
   const catalogRepository = new SqliteCatalogRepository(opened.database);
-  const offerRepository = new SqliteOfferRepository(opened.database);
+  const offerRepository = new SqliteOfferRepository(opened.database, country);
   const wishlistRepository = new SqliteWishlistRepository(opened.database);
-  const transactionManager = new SqliteTransactionManager(opened.database);
+  const runInTransaction = createSqliteTransactionRunner(opened.database);
   const catalogService = new CatalogService(catalogRepository);
   const offerService = new OfferService(catalogRepository, offerRepository, country, comparisonCurrency);
   const wishlistService = new WishlistService(wishlistRepository);
@@ -62,7 +62,7 @@ export function createApplication(input: {
       provider: deterministicProvider,
       catalogRepository,
       offerRepository,
-      transactionManager,
+      runInTransaction,
       country,
       comparisonCurrency,
       observedAt,

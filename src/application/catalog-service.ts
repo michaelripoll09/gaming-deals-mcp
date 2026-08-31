@@ -7,7 +7,7 @@ export class CatalogService {
 
   async search(query: string): Promise<ProductVariant[]> {
     try {
-      return this.catalogRepository.search(query);
+      return await this.catalogRepository.search(query);
     } catch (error) {
       throw new PublicError('persistence_failure', 'Persistent storage is unavailable', error);
     }

@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import type { DatabaseSync, StatementSync } from 'node:sqlite';
 import { productVariantSchema, type CatalogEntry, type ProductVariant } from '../../domain/catalog/types.js';
 import {
@@ -11,34 +10,44 @@ import {
   type ProviderListing,
 } from '../../domain/offers/types.js';
 import { wishlistEntrySchema, type WishlistEntry } from '../../domain/wishlist/types.js';
+import { PublicError } from '../../errors/public-error.js';
 import type {
   CatalogRepository,
-  OfferCandidate,
   OfferRepository,
-  TransactionManager,
   WishlistRepository,
 } from '../../application/ports.js';
 
 type Row = Record<string, unknown>;
 
-export class SqliteTransactionManager implements TransactionManager {
-  constructor(private readonly database: DatabaseSync) {}
+export function createSqliteTransactionRunner(database: DatabaseSync) {
+  let active = false;
 
-  run<T>(work: () => T): T {
-    this.database.exec('BEGIN IMMEDIATE');
+  return async function runInTransaction<T>(work: () => Promise<T>): Promise<T> {
+    if (active) {
+      throw new PublicError('persistence_failure', 'Nested storage transactions are not supported');
+    }
+
+    active = true;
+    let began = false;
     try {
-      const result = work();
-      this.database.exec('COMMIT');
+      database.exec('BEGIN IMMEDIATE');
+      began = true;
+      const result = await work();
+      database.exec('COMMIT');
       return result;
     } catch (error) {
-      try {
-        this.database.exec('ROLLBACK');
-      } catch {
-        // Preserve the original storage failure.
+      if (began) {
+        try {
+          database.exec('ROLLBACK');
+        } catch {
+          // Preserve the original storage failure.
+        }
       }
       throw error;
+    } finally {
+      active = false;
     }
-  }
+  };
 }
 
 export class SqliteCatalogRepository implements CatalogRepository {
@@ -104,56 +113,55 @@ export class SqliteCatalogRepository implements CatalogRepository {
     `);
   }
 
-  upsert(entries: CatalogEntry[], createdAt: string): void {
-    for (const entry of entries) {
-      this.upsertGame.run(
-        entry.game.id,
-        entry.game.canonicalTitle,
-        normalizeSearchText(entry.game.canonicalTitle),
-        createdAt,
-      );
-      this.upsertRelease.run(
-        entry.release.id,
-        entry.release.gameId,
-        entry.release.title,
-        String(entry.release.releaseYear),
-        createdAt,
-      );
-      this.upsertEdition.run(entry.edition.id, entry.edition.releaseId, entry.edition.name, createdAt);
-      this.upsertProductVariant.run(
-        entry.productVariant.id,
-        entry.productVariant.editionId,
-        entry.productVariant.platform,
-        entry.productVariant.distribution,
-        createdAt,
-        entry.productVariant.regionCode,
-      );
-    }
+  async upsertCatalog(entry: CatalogEntry): Promise<void> {
+    const createdAt = new Date().toISOString();
+    this.upsertGame.run(
+      entry.game.id,
+      entry.game.canonicalTitle,
+      normalizeSearchText(entry.game.canonicalTitle),
+      createdAt,
+    );
+    this.upsertRelease.run(
+      entry.release.id,
+      entry.release.gameId,
+      entry.release.title,
+      String(entry.release.releaseYear),
+      createdAt,
+    );
+    this.upsertEdition.run(entry.edition.id, entry.edition.releaseId, entry.edition.name, createdAt);
+    this.upsertProductVariant.run(
+      entry.productVariant.id,
+      entry.productVariant.editionId,
+      entry.productVariant.platform,
+      entry.productVariant.distribution,
+      createdAt,
+      entry.productVariant.regionCode,
+    );
   }
 
-  search(query: string): ProductVariant[] {
+  async search(query: string): Promise<ProductVariant[]> {
     const normalized = normalizeSearchText(query);
     const pattern = `%${escapeLike(normalized)}%`;
     return this.searchProductVariants.all(normalized, pattern, pattern, pattern)
       .map((row) => mapProductVariant(asRow(row)));
   }
 
-  findProductVariant(productVariantId: string): ProductVariant | null {
+  async findProductVariant(productVariantId: string): Promise<ProductVariant | null> {
     const row = this.findProductVariantById.get(productVariantId);
     return row === undefined ? null : mapProductVariant(asRow(row));
   }
 }
 
 export class SqliteOfferRepository implements OfferRepository {
-  private readonly upsertListing: StatementSync;
+  private readonly upsertListingStatement: StatementSync;
   private readonly upsertOffer: StatementSync;
-  private readonly findCurrentOfferId: StatementSync;
+  private readonly findCurrentOfferIdStatement: StatementSync;
   private readonly insertObservation: StatementSync;
   private readonly selectCandidates: StatementSync;
   private readonly selectPriceHistory: StatementSync;
 
-  constructor(database: DatabaseSync) {
-    this.upsertListing = database.prepare(`
+  constructor(database: DatabaseSync, private readonly country: string) {
+    this.upsertListingStatement = database.prepare(`
       INSERT INTO provider_listings (
         id, provider_id, provider_product_id, product_variant_id, mapping_state
       ) VALUES (?, ?, ?, ?, ?)
@@ -190,7 +198,7 @@ export class SqliteOfferRepository implements OfferRepository {
         shipping_known = excluded.shipping_known,
         taxes_known = excluded.taxes_known
     `);
-    this.findCurrentOfferId = database.prepare(`
+    this.findCurrentOfferIdStatement = database.prepare(`
       SELECT id FROM offers WHERE provider_listing_id = ? AND country = ?
     `);
     this.insertObservation = database.prepare(`
@@ -250,72 +258,75 @@ export class SqliteOfferRepository implements OfferRepository {
     `);
   }
 
-  upsertListings(listings: ProviderListing[]): void {
-    for (const listing of listings) {
-      this.upsertListing.run(
-        listing.id,
-        listing.providerId,
-        listing.providerProductId,
-        listing.productVariantId,
-        listing.mappingState,
-      );
-    }
+  async upsertListing(listing: ProviderListing): Promise<void> {
+    this.upsertListingStatement.run(
+      listing.id,
+      listing.providerId,
+      listing.providerProductId,
+      listing.productVariantId,
+      listing.mappingState,
+    );
   }
 
-  upsertCurrentAndAppendObservations(offers: Offer[], country: string): number {
-    let observationCount = 0;
-
-    for (const offer of offers) {
-      this.upsertOffer.run(
-        offer.id,
-        offer.providerListingId,
-        country,
-        offer.originalPrice.currency,
-        offer.originalPrice.amountMinor,
-        offer.destinationUrl,
-        offer.observedAt,
-        offer.sourceObservationKey,
-        offer.normalizedPrice?.amountMinor ?? null,
-        offer.normalizedPrice?.currency ?? null,
-        offer.normalizedFinalPrice?.amountMinor ?? null,
-        offer.normalizedFinalPrice?.currency ?? null,
-        offer.exchangeRateSource,
-        offer.convertedAt,
-        offer.regionStatus,
-        offer.retailerClass,
-        offer.sourceConfidence,
-        offer.shippingKnown ? 1 : 0,
-        offer.taxesKnown ? 1 : 0,
-      );
-
-      const current = this.findCurrentOfferId.get(offer.providerListingId, country);
-      if (current === undefined) {
-        throw new Error('Current offer was not persisted');
-      }
-      const currentOfferId = requiredString(asRow(current), 'id');
-      const inserted = this.insertObservation.run(
-        observationId(offer.providerListingId, offer.sourceObservationKey),
-        currentOfferId,
-        offer.providerListingId,
-        offer.sourceObservationKey,
-        offer.originalPrice.amountMinor,
-        offer.originalPrice.currency,
-        offer.normalizedPrice?.amountMinor ?? null,
-        offer.normalizedPrice?.currency ?? null,
-        offer.observedAt,
-      );
-      observationCount += Number(inserted.changes);
+  async upsertCurrentOffer(offer: Offer): Promise<void> {
+    const currentOfferId = await this.findCurrentOfferId(offer.providerListingId);
+    if (currentOfferId !== null && currentOfferId !== offer.id) {
+      throw new PublicError('provider_data_invalid', 'Provider data is invalid');
     }
-
-    return observationCount;
+    this.upsertOffer.run(
+      offer.id,
+      offer.providerListingId,
+      this.country,
+      offer.originalPrice.currency,
+      offer.originalPrice.amountMinor,
+      offer.destinationUrl,
+      offer.observedAt,
+      offer.sourceObservationKey,
+      offer.normalizedPrice?.amountMinor ?? null,
+      offer.normalizedPrice?.currency ?? null,
+      offer.normalizedFinalPrice?.amountMinor ?? null,
+      offer.normalizedFinalPrice?.currency ?? null,
+      offer.exchangeRateSource,
+      offer.convertedAt,
+      offer.regionStatus,
+      offer.retailerClass,
+      offer.sourceConfidence,
+      offer.shippingKnown ? 1 : 0,
+      offer.taxesKnown ? 1 : 0,
+    );
   }
 
-  listCandidatesForProductVariant(productVariantId: string, country: string): OfferCandidate[] {
-    return this.selectCandidates.all(productVariantId, country)
+  async appendPriceObservation(observation: PriceObservation): Promise<'inserted' | 'already_exists'> {
+    const result = this.insertObservation.run(
+      observation.id,
+      observation.offerId,
+      observation.providerListingId,
+      observation.sourceObservationKey,
+      observation.originalPrice.amountMinor,
+      observation.originalPrice.currency,
+      observation.normalizedPrice?.amountMinor ?? null,
+      observation.normalizedPrice?.currency ?? null,
+      observation.observedAt,
+    );
+    return Number(result.changes) === 0 ? 'already_exists' : 'inserted';
+  }
+
+  async findCurrentOfferId(providerListingId: string): Promise<string | null> {
+    const row = this.findCurrentOfferIdStatement.get(providerListingId, this.country);
+    return row === undefined ? null : requiredString(asRow(row), 'id');
+  }
+
+  async listOffers(productVariantId: string): Promise<Offer[]> {
+    const candidates = await this.listOfferCandidates(productVariantId);
+    return candidates.map(({ offer }) => offer);
+  }
+
+  async listOfferCandidates(productVariantId: string): Promise<Array<{ listing: ProviderListing; offer: Offer }>> {
+    return this.selectCandidates.all(productVariantId, this.country)
       .map((row) => mapOfferCandidate(asRow(row)));
   }
 
-  listPriceHistory(productVariantId: string): PriceObservation[] {
+  async listPriceHistory(productVariantId: string): Promise<PriceObservation[]> {
     return this.selectPriceHistory.all(productVariantId)
       .map((row) => mapPriceObservation(asRow(row)));
   }
@@ -356,7 +367,7 @@ export class SqliteWishlistRepository implements WishlistRepository {
     this.deleteEntry = database.prepare('DELETE FROM wishlist_entries WHERE id = ?');
   }
 
-  create(entry: WishlistEntry): WishlistEntry {
+  async create(entry: WishlistEntry): Promise<void> {
     this.insertEntry.run(
       entry.id,
       entry.productVariantId,
@@ -367,14 +378,13 @@ export class SqliteWishlistRepository implements WishlistRepository {
       entry.notes,
       entry.updatedAt,
     );
-    return this.getRequired(entry.id);
   }
 
-  list(): WishlistEntry[] {
+  async list(): Promise<WishlistEntry[]> {
     return this.selectAll.all().map((row) => mapWishlistEntry(asRow(row)));
   }
 
-  update(entry: WishlistEntry): WishlistEntry | null {
+  async update(entry: WishlistEntry): Promise<WishlistEntry | null> {
     const updated = this.updateEntry.run(
       entry.productVariantId,
       entry.priority,
@@ -387,7 +397,7 @@ export class SqliteWishlistRepository implements WishlistRepository {
     return Number(updated.changes) === 0 ? null : this.getRequired(entry.id);
   }
 
-  remove(wishlistEntryId: string): boolean {
+  async remove(wishlistEntryId: string): Promise<boolean> {
     return Number(this.deleteEntry.run(wishlistEntryId).changes) > 0;
   }
 
@@ -410,7 +420,7 @@ function mapProductVariant(row: Row): ProductVariant {
   });
 }
 
-function mapOfferCandidate(row: Row): OfferCandidate {
+function mapOfferCandidate(row: Row): { listing: ProviderListing; offer: Offer } {
   const listing = providerListingSchema.parse({
     id: row.listingId,
     providerId: row.providerId,
@@ -504,17 +514,4 @@ function normalizeSearchText(value: string): string {
 
 function escapeLike(value: string): string {
   return value.replace(/[\\%_]/g, (character) => `\\${character}`);
-}
-
-function observationId(providerListingId: string, sourceObservationKey: string): string {
-  const bytes = createHash('sha256')
-    .update(providerListingId)
-    .update('\0')
-    .update(sourceObservationKey)
-    .digest()
-    .subarray(0, 16);
-  bytes[6] = (bytes[6]! & 0x0f) | 0x50;
-  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
-  const hex = bytes.toString('hex');
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }

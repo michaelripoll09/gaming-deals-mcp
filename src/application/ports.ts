@@ -1,34 +1,31 @@
-import type { CatalogEntry, ProductVariant } from '../domain/catalog/types.js';
+import type { Edition, Game, ProductVariant, Release } from '../domain/catalog/types.js';
 import type { Offer, PriceObservation, ProviderListing } from '../domain/offers/types.js';
 import type { WishlistEntry } from '../domain/wishlist/types.js';
 
 export interface CatalogRepository {
-  upsert(entries: CatalogEntry[], createdAt: string): void;
-  search(query: string): ProductVariant[];
-  findProductVariant(productVariantId: string): ProductVariant | null;
-}
-
-export interface OfferCandidate {
-  listing: ProviderListing;
-  offer: Offer;
+  search(query: string): Promise<ProductVariant[]>;
+  findProductVariant(productVariantId: string): Promise<ProductVariant | null>;
+  upsertCatalog(input: {
+    game: Game;
+    release: Release;
+    edition: Edition;
+    productVariant: ProductVariant;
+  }): Promise<void>;
 }
 
 export interface OfferRepository {
-  upsertListings(listings: ProviderListing[]): void;
-  upsertCurrentAndAppendObservations(offers: Offer[], country: string): number;
-  listCandidatesForProductVariant(productVariantId: string, country: string): OfferCandidate[];
-  listPriceHistory(productVariantId: string): PriceObservation[];
+  upsertListing(listing: ProviderListing): Promise<void>;
+  upsertCurrentOffer(offer: Offer): Promise<void>;
+  appendPriceObservation(observation: PriceObservation): Promise<'inserted' | 'already_exists'>;
+  listOffers(productVariantId: string): Promise<Offer[]>;
+  listPriceHistory(productVariantId: string): Promise<PriceObservation[]>;
 }
 
 export interface WishlistRepository {
-  create(entry: WishlistEntry): WishlistEntry;
-  list(): WishlistEntry[];
-  update(entry: WishlistEntry): WishlistEntry | null;
-  remove(wishlistEntryId: string): boolean;
-}
-
-export interface TransactionManager {
-  run<T>(work: () => T): T;
+  create(entry: WishlistEntry): Promise<void>;
+  list(): Promise<WishlistEntry[]>;
+  update(entry: WishlistEntry): Promise<WishlistEntry | null>;
+  remove(wishlistEntryId: string): Promise<boolean>;
 }
 
 export interface SyncSummary {

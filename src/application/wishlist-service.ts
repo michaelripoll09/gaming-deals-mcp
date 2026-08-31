@@ -19,7 +19,8 @@ export class WishlistService {
       updatedAt: input.now,
     });
 
-    return this.withPersistence(() => this.wishlistRepository.create(entry));
+    await this.withPersistence(() => this.wishlistRepository.create(entry));
+    return structuredClone(entry);
   }
 
   async list(): Promise<WishlistEntry[]> {
@@ -35,9 +36,9 @@ export class WishlistService {
     return this.withPersistence(() => this.wishlistRepository.remove(wishlistEntryId));
   }
 
-  private withPersistence<T>(operation: () => T): T {
+  private async withPersistence<T>(operation: () => Promise<T>): Promise<T> {
     try {
-      return operation();
+      return await operation();
     } catch (error) {
       throw new PublicError('persistence_failure', 'Persistent storage is unavailable', error);
     }

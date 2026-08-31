@@ -67,7 +67,9 @@ export function selectBestOffer(input: {
       positiveFactors: [],
       negativeFactors: [],
       blockers,
-      explanation: `No eligible verified offer is available for ${country}.`,
+      explanation: blockers.length === 0
+        ? `No eligible verified offer is available for ${country}.`
+        : `No eligible verified offer is available for ${country}. ${formatExclusions(blockers)}`,
     };
   }
 
@@ -193,9 +195,6 @@ function buildExplanation(input: {
   blockers: Array<{ offerId: string; reasons: string[] }>;
 }): string {
   const { offer } = input.candidate;
-  const exclusionSummary = input.blockers.length === 0
-    ? 'Exclusions: none.'
-    : `Exclusions: ${input.blockers.map((blocker) => `${blocker.offerId} (${blocker.reasons.join('; ')})`).join(', ')}.`;
 
   return [
     `Product variant: ${input.productVariant.id}.`,
@@ -210,8 +209,14 @@ function buildExplanation(input: {
     `Historical normalized low: ${input.historyLow === null ? 'unavailable' : formatMoney(input.historyLow)}.`,
     `Positive factors: ${input.positiveFactors.join('; ') || 'none'}.`,
     `Negative factors: ${input.negativeFactors.join('; ') || 'none'}.`,
-    exclusionSummary,
+    formatExclusions(input.blockers),
   ].join(' ');
+}
+
+function formatExclusions(blockers: Array<{ offerId: string; reasons: string[] }>): string {
+  return blockers.length === 0
+    ? 'Exclusions: none.'
+    : `Exclusions: ${blockers.map((blocker) => `${blocker.offerId} (${blocker.reasons.join('; ')})`).join(', ')}.`;
 }
 
 function formatOptionalMoney(money: Money | null): string {

@@ -113,6 +113,18 @@ describe('selectBestOffer', () => {
     expect(result.explanation).toBe('No eligible verified offer is available for CO.');
   });
 
+  test('appends deterministic exclusions when every candidate is rejected', () => {
+    const ambiguous = candidate({ id: '000000000016', mappingState: 'ambiguous' });
+    const incompatible = candidate({ id: '000000000017', regionStatus: 'incompatible', finalPrice: null });
+
+    const result = select([ambiguous, incompatible]);
+
+    expect(result.selected).toBeNull();
+    expect(result.explanation).toBe(
+      `No eligible verified offer is available for CO. Exclusions: ${ambiguous.offer.id} (Mapping is not verified), ${incompatible.offer.id} (Offer is incompatible with CO; Reliable COP final price is unavailable).`,
+    );
+  });
+
   test('excludes unverified, incompatible, and unreliable-final-price candidates', () => {
     const safe = candidate({ id: '000000000004', amountMinor: 4_000_000 });
     const ambiguous = candidate({ id: '000000000005', amountMinor: 1, mappingState: 'ambiguous' });
@@ -153,9 +165,20 @@ describe('selectBestOffer', () => {
       .toBe(highFirstPartyEarlier.offer.id);
   });
 
-  test('preserves a snapshot explanation with price-history context despite later input mutation', () => {
+  test('prefers a high-confidence authorized store over a medium-confidence first-party store at equal price', () => {
+    const highAuthorized = candidate({
+      id: '000000000018', confidence: 'high', retailerClass: 'authorized_store',
+    });
+    const mediumFirstParty = candidate({
+      id: '000000000019', confidence: 'medium', retailerClass: 'first_party_storefront',
+    });
+
+    expect(select([mediumFirstParty, highAuthorized]).selected?.offer.id).toBe(highAuthorized.offer.id);
+  });
+
+  test('uses only matching-offer history in the requested comparison currency', () => {
     const reliable = candidate({
-      id: '000000000015', amountMinor: 4_000_000, shippingKnown: false, taxesKnown: false,
+      id: '000000000020', amountMinor: 4_000_000, shippingKnown: false, taxesKnown: false,
     });
     const result = selectBestOffer({
       productVariant,
@@ -170,19 +193,58 @@ describe('selectBestOffer', () => {
         originalPrice: { amountMinor: 3_500_000, currency: 'COP' },
         normalizedPrice: { amountMinor: 3_500_000, currency: 'COP' },
         observedAt: '2026-08-29T00:00:00.000Z',
+      }, {
+        id: 'a6f3971c-4b43-4d51-940c-60a44cb7c9db',
+        offerId: '6c86d8de-9f26-494f-9462-000000000021',
+        providerListingId: 'd0075e12-e721-4d0c-8ed4-000000000021',
+        sourceObservationKey: 'other-offer-low',
+        originalPrice: { amountMinor: 1, currency: 'COP' },
+        normalizedPrice: { amountMinor: 1, currency: 'COP' },
+        observedAt: '2026-08-29T00:00:00.000Z',
+      }, {
+        id: 'fac1ce43-009e-45fa-8fd5-3b8202b71f17',
+        offerId: reliable.offer.id,
+        providerListingId: reliable.listing.id,
+        sourceObservationKey: 'wrong-currency-low',
+        originalPrice: { amountMinor: 1, currency: 'USD' },
+        normalizedPrice: { amountMinor: 1, currency: 'USD' },
+        observedAt: '2026-08-29T00:00:00.000Z',
       }],
     });
-    const explanation = result.explanation;
 
-    reliable.offer.originalPrice.amountMinor = 1;
-    reliable.offer.normalizedFinalPrice!.amountMinor = 1;
-
-    expect(result.explanation).toBe(explanation);
-    expect(result.explanation).toContain('COP 4,000,000');
     expect(result.explanation).toContain('Historical normalized low: COP 3,500,000');
     expect(result.negativeFactors).toEqual([
       'Shipping cost is unknown',
       'Taxes are unknown',
     ]);
+  });
+
+  test('returns a selected snapshot detached from caller-owned listing and money values', () => {
+    const reliable = candidate({ id: '000000000022', amountMinor: 4_000_000 });
+    const result = select([reliable]);
+
+    reliable.offer.originalPrice.amountMinor = 1;
+    reliable.offer.normalizedFinalPrice!.amountMinor = 1;
+    reliable.listing.providerId = 'changed-by-caller';
+
+    expect(result.selected).toMatchObject({
+      listing: { providerId: 'deterministic' },
+      offer: {
+        originalPrice: { amountMinor: 4_000_000 },
+        normalizedFinalPrice: { amountMinor: 4_000_000 },
+      },
+    });
+
+    result.selected!.listing.providerId = 'changed-by-result';
+    result.selected!.offer.originalPrice.amountMinor = 2;
+    result.selected!.offer.normalizedFinalPrice!.amountMinor = 2;
+
+    expect(reliable).toMatchObject({
+      listing: { providerId: 'changed-by-caller' },
+      offer: {
+        originalPrice: { amountMinor: 1 },
+        normalizedFinalPrice: { amountMinor: 1 },
+      },
+    });
   });
 });

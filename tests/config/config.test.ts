@@ -22,15 +22,33 @@ describe('loadConfig', () => {
     })).toMatchObject({ country: 'CO', comparisonCurrency: 'COP' });
   });
 
-  test('rejects malformed or empty country and comparison currency codes', () => {
+  test('rejects malformed country with a valid comparison currency', () => {
     expect(() => loadConfig({
       GAMING_DEALS_COUNTRY: '$$',
+      GAMING_DEALS_COMPARISON_CURRENCY: 'COP',
+      GAMING_DEALS_DATABASE_PATH: 'C:/tmp/deals.sqlite',
+    })).toThrow('Invalid configuration');
+  });
+
+  test('rejects an empty country with a valid comparison currency', () => {
+    expect(() => loadConfig({
+      GAMING_DEALS_COUNTRY: '',
+      GAMING_DEALS_COMPARISON_CURRENCY: 'COP',
+      GAMING_DEALS_DATABASE_PATH: 'C:/tmp/deals.sqlite',
+    })).toThrow('Invalid configuration');
+  });
+
+  test('rejects malformed comparison currency with a valid country', () => {
+    expect(() => loadConfig({
+      GAMING_DEALS_COUNTRY: 'CO',
       GAMING_DEALS_COMPARISON_CURRENCY: '12!',
       GAMING_DEALS_DATABASE_PATH: 'C:/tmp/deals.sqlite',
     })).toThrow('Invalid configuration');
+  });
 
+  test('rejects an empty comparison currency with a valid country', () => {
     expect(() => loadConfig({
-      GAMING_DEALS_COUNTRY: '',
+      GAMING_DEALS_COUNTRY: 'CO',
       GAMING_DEALS_COMPARISON_CURRENCY: '',
       GAMING_DEALS_DATABASE_PATH: 'C:/tmp/deals.sqlite',
     })).toThrow('Invalid configuration');

@@ -224,6 +224,7 @@ describe('selectBestOffer', () => {
     const result = select([reliable]);
 
     reliable.offer.originalPrice.amountMinor = 1;
+    reliable.offer.normalizedPrice.amountMinor = 1;
     reliable.offer.normalizedFinalPrice!.amountMinor = 1;
     reliable.listing.providerId = 'changed-by-caller';
 
@@ -231,18 +232,21 @@ describe('selectBestOffer', () => {
       listing: { providerId: 'deterministic' },
       offer: {
         originalPrice: { amountMinor: 4_000_000 },
+        normalizedPrice: { amountMinor: 4_000_000 },
         normalizedFinalPrice: { amountMinor: 4_000_000 },
       },
     });
 
     result.selected!.listing.providerId = 'changed-by-result';
     result.selected!.offer.originalPrice.amountMinor = 2;
+    result.selected!.offer.normalizedPrice!.amountMinor = 2;
     result.selected!.offer.normalizedFinalPrice!.amountMinor = 2;
 
     expect(reliable).toMatchObject({
       listing: { providerId: 'changed-by-caller' },
       offer: {
         originalPrice: { amountMinor: 1 },
+        normalizedPrice: { amountMinor: 1 },
         normalizedFinalPrice: { amountMinor: 1 },
       },
     });

@@ -1,4 +1,3 @@
-import type { DatabaseSync } from 'node:sqlite';
 import { describe, expect, test, vi } from 'vitest';
 import { AccessService } from '../../src/application/access-service.js';
 import { OfferService } from '../../src/application/offer-service.js';
@@ -131,13 +130,57 @@ describe('recommendation service', () => {
     }
   });
 
-  test('uses the injected policy and sorts score, priority, then product-variant UUID', async () => {
-    const policy: DealScorePolicy = {
-      evaluate: vi.fn((candidate) => ({
-        score: candidate.productVariant.id.endsWith('6d') ? 10 : 10,
-        verdict: 'wait', contributions: [], positiveFactors: [], negativeFactors: [], explanation: 'test policy',
-      })),
-    };
+  test('uses one injected evaluation time and ranks higher scores before higher priorities', async () => {
+    const clock = vi.fn(() => evaluatedAt);
+    const context = await createContext({
+      eligibleSecondVariant: true,
+      clock,
+      policy: scoredPolicy({
+        '10293847-5647-4a3b-8c2d-1e0f9a8b7c6d': 10,
+        'fedcba98-7654-4b3a-9210-0fedcba98765': 20,
+      }),
+    });
+    const firstVariantId = context.variantIds[0]!;
+    const secondVariantId = context.variantIds[1]!;
+    await context.wishlistService.create(wishlistInput(firstVariantId, 3));
+    await context.wishlistService.create(wishlistInput(secondVariantId, 1));
+
+    try {
+      const result = await context.service.whatShouldIBuy();
+
+      expect(result.recommendations.map(({ productVariant }) => productVariant.id)).toEqual([
+        secondVariantId,
+        firstVariantId,
+      ]);
+      expect(clock).toHaveBeenCalledTimes(1);
+      expect(context.policy.evaluate).toHaveBeenCalledTimes(2);
+      expect((context.policy.evaluate as ReturnType<typeof vi.fn>).mock.calls.map(([candidate]) => candidate.evaluatedAt))
+        .toEqual([evaluatedAt, evaluatedAt]);
+    } finally {
+      context.close();
+    }
+  });
+
+  test('ranks higher wishlist priority before UUID when scores tie', async () => {
+    const policy = scoredPolicy({});
+    const context = await createContext({ eligibleSecondVariant: true, policy });
+    const firstVariantId = context.variantIds[0]!;
+    const secondVariantId = context.variantIds[1]!;
+    await context.wishlistService.create(wishlistInput(firstVariantId, 1));
+    await context.wishlistService.create(wishlistInput(secondVariantId, 3));
+
+    try {
+      expect((await context.service.whatShouldIBuy()).recommendations.map(({ productVariant }) => productVariant.id)).toEqual([
+        secondVariantId,
+        firstVariantId,
+      ]);
+    } finally {
+      context.close();
+    }
+  });
+
+  test('uses product-variant UUID as the final tie-breaker', async () => {
+    const policy = scoredPolicy({});
     const context = await createContext({ eligibleSecondVariant: true, policy });
     const firstVariantId = context.variantIds[0]!;
     const secondVariantId = context.variantIds[1]!;
@@ -145,17 +188,27 @@ describe('recommendation service', () => {
     await context.wishlistService.create(wishlistInput(firstVariantId, 2));
 
     try {
-      const result = await context.service.whatShouldIBuy();
-
-      expect(policy.evaluate).toHaveBeenCalledTimes(2);
-      expect(result.recommendations.map(({ productVariant }) => productVariant.id)).toEqual([
+      expect((await context.service.whatShouldIBuy()).recommendations.map(({ productVariant }) => productVariant.id)).toEqual([
         firstVariantId,
         secondVariantId,
       ]);
-      expect((policy.evaluate as ReturnType<typeof vi.fn>).mock.calls[0]![0]).toMatchObject({
-        evaluatedAt,
-        comparisonCurrency: 'COP',
-      });
+    } finally {
+      context.close();
+    }
+  });
+
+  test('uses the product variant’s lowest same-currency history across all offers', async () => {
+    const context = await createContext({ additionalOfferForFirstVariant: true });
+    const productVariantId = context.variantIds[0]!;
+    await context.wishlistService.create(wishlistInput(productVariantId));
+
+    try {
+      const result = await context.service.whatShouldIBuy();
+
+      expect(result.recommendations[0]!.selectedOffer.offer.id).toBe(context.fixture.offers[0]!.id);
+      expect(result.recommendations[0]!.score.contributions).toContainEqual(expect.objectContaining({
+        factor: 'price_history', points: 10,
+      }));
     } finally {
       context.close();
     }
@@ -194,15 +247,49 @@ describe('recommendation service', () => {
       context.temporary.cleanup();
     }
   });
+
+  test('redacts injected policy failures as internal_error rather than persistence_failure', async () => {
+    const policy: DealScorePolicy = { evaluate: () => { throw new Error('policy secret'); } };
+    const context = await createContext({ policy });
+    await context.wishlistService.create(wishlistInput(context.variantIds[0]!));
+
+    try {
+      await expect(context.service.whatShouldIBuy()).rejects.toMatchObject<Partial<PublicError>>({
+        code: 'internal_error', message: 'An unexpected error occurred',
+      });
+    } finally {
+      context.close();
+    }
+  });
+
+  test('redacts injected clock failures as internal_error rather than persistence_failure', async () => {
+    const context = await createContext({ clock: () => { throw new Error('clock secret'); } });
+    await context.wishlistService.create(wishlistInput(context.variantIds[0]!));
+
+    try {
+      await expect(context.service.whatShouldIBuy()).rejects.toMatchObject<Partial<PublicError>>({
+        code: 'internal_error', message: 'An unexpected error occurred',
+      });
+    } finally {
+      context.close();
+    }
+  });
 });
 
-async function createContext(input: { eligibleSecondVariant?: boolean; omitSecondOffer?: boolean; policy?: DealScorePolicy } = {}) {
+async function createContext(input: {
+  eligibleSecondVariant?: boolean;
+  omitSecondOffer?: boolean;
+  additionalOfferForFirstVariant?: boolean;
+  policy?: DealScorePolicy;
+  clock?: () => string;
+} = {}) {
   const temporary = createTemporaryDatabase();
   const opened = openDatabase(temporary.path);
   const catalogRepository = new SqliteCatalogRepository(opened.database);
   const offerRepository = new SqliteOfferRepository(opened.database, 'CO');
   const wishlistRepository = new SqliteWishlistRepository(opened.database);
   const accessRepository = new SqliteAccessRepository(opened.database);
+  const policy = input.policy ?? new DealScoreV1Policy();
   const fixture = createDeterministicSyncFixture();
   if (input.eligibleSecondVariant) fixture.offers[1]!.regionStatus = 'compatible';
   if (input.omitSecondOffer) fixture.offers.splice(1, 1);
@@ -221,6 +308,34 @@ async function createContext(input: { eligibleSecondVariant?: boolean; omitSecon
     country: 'CO', comparisonCurrency: 'COP', observedAt: '2026-08-30T00:00:00.000Z',
   });
 
+  if (input.additionalOfferForFirstVariant) {
+    const listing = {
+      ...fixture.listings[0]!,
+      id: 'd1a2b3c4-1234-4567-89ab-cdef01234567',
+      providerProductId: 'cobalt-horizon-second-store',
+    };
+    const offer = {
+      ...fixture.offers[0]!,
+      id: 'e1a2b3c4-1234-4567-89ab-cdef01234567',
+      providerListingId: listing.id,
+      sourceObservationKey: 'deterministic:CO:COP:cobalt:second-store-current',
+      originalPrice: { amountMinor: 6_000_000, currency: 'COP' },
+      normalizedPrice: { amountMinor: 6_000_000, currency: 'COP' },
+      normalizedFinalPrice: { amountMinor: 6_000_000, currency: 'COP' },
+    };
+    await offerRepository.upsertListing(listing);
+    await offerRepository.upsertCurrentOffer(offer);
+    await offerRepository.appendPriceObservation({
+      id: 'f1a2b3c4-1234-4567-89ab-cdef01234567',
+      offerId: offer.id,
+      providerListingId: listing.id,
+      sourceObservationKey: 'deterministic:CO:COP:cobalt:second-store-historical-low',
+      originalPrice: { amountMinor: 4_000_000, currency: 'COP' },
+      normalizedPrice: { amountMinor: 4_000_000, currency: 'COP' },
+      observedAt: '2026-08-29T00:00:00.000Z',
+    });
+  }
+
   const wishlistService = new WishlistService(wishlistRepository);
   const accessService = new AccessService(accessRepository, catalogRepository);
   const service = new RecommendationService({
@@ -228,15 +343,25 @@ async function createContext(input: { eligibleSecondVariant?: boolean; omitSecon
     catalogRepository,
     accessRepository,
     offerService: new OfferService(catalogRepository, offerRepository, 'CO', 'COP'),
-    policy: input.policy ?? new DealScoreV1Policy(),
-    clock: () => evaluatedAt,
+    policy,
+    clock: input.clock ?? (() => evaluatedAt),
     comparisonCurrency: 'COP',
   });
 
   return {
     temporary, opened, fixture, service, wishlistService, accessService, accessRepository,
+    policy,
     variantIds: fixture.catalog.map(({ productVariant }) => productVariant.id),
     close: () => { opened.close(); temporary.cleanup(); },
+  };
+}
+
+function scoredPolicy(scores: Record<string, number>): DealScorePolicy {
+  return {
+    evaluate: vi.fn((candidate) => ({
+      score: scores[candidate.productVariant.id] ?? 10,
+      verdict: 'wait', contributions: [], positiveFactors: [], negativeFactors: [], explanation: 'test policy',
+    })),
   };
 }
 

@@ -42,9 +42,9 @@ export class RecommendationService implements Application {
 
   async whatShouldIBuy(): Promise<WhatShouldIBuyResult> {
     try {
-      const wishlistEntries = await this.input.wishlistRepository.list();
+      const wishlistEntries = await this.withPersistence(() => this.input.wishlistRepository.list());
       const productVariantIds = [...new Set(wishlistEntries.map((entry) => entry.productVariantId))];
-      const accessRecords = await this.input.accessRepository.listByProductVariantIds(productVariantIds);
+      const accessRecords = await this.withPersistence(() => this.input.accessRepository.listByProductVariantIds(productVariantIds));
       const evaluatedAt = this.input.clock();
       const accessByProductVariantId = groupByProductVariantId(accessRecords);
       const recommendations: Recommendation[] = [];
@@ -66,13 +66,13 @@ export class RecommendationService implements Application {
           continue;
         }
 
-        const productVariant = await this.input.catalogRepository.findProductVariant(wishlistEntry.productVariantId);
+        const productVariant = await this.withPersistence(() => this.input.catalogRepository.findProductVariant(wishlistEntry.productVariantId));
         if (productVariant === null) {
           throw new PublicError('product_not_found', 'Product variant was not found');
         }
 
         const history = await this.input.offerService.listPriceHistory(wishlistEntry.productVariantId);
-        const historicalLow = sameCurrencyHistoricalLow(history, comparison.selected.offer.id, this.input.comparisonCurrency);
+        const historicalLow = sameCurrencyHistoricalLow(history, this.input.comparisonCurrency);
         const score = this.input.policy.evaluate({
           wishlistEntry,
           productVariant,
@@ -95,6 +95,15 @@ export class RecommendationService implements Application {
         recommendations: recommendations.sort(compareRecommendations),
         exclusions,
       };
+    } catch (error) {
+      if (error instanceof PublicError) throw error;
+      throw new PublicError('internal_error', 'An unexpected error occurred', error);
+    }
+  }
+
+  private async withPersistence<T>(operation: () => Promise<T>): Promise<T> {
+    try {
+      return await operation();
     } catch (error) {
       if (error instanceof PublicError) throw error;
       throw new PublicError('persistence_failure', 'Persistent storage is unavailable', error);
@@ -122,12 +131,10 @@ function safeOfferBlockers(
 
 function sameCurrencyHistoricalLow(
   history: Awaited<ReturnType<OfferService['listPriceHistory']>>,
-  selectedOfferId: string,
   comparisonCurrency: string,
 ): Money | null {
   const normalizedCurrency = comparisonCurrency.trim().toUpperCase();
   const prices = history
-    .filter((observation) => observation.offerId === selectedOfferId)
     .map((observation) => observation.normalizedPrice)
     .filter((price): price is Money => price !== null && price.currency === normalizedCurrency);
 

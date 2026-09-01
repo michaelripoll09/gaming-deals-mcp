@@ -7,6 +7,7 @@ import { PublicError } from '../errors/public-error.js';
 import { AccessService, type CreateAccessRecordInput } from '../application/access-service.js';
 import { CatalogService } from '../application/catalog-service.js';
 import { OfferService } from '../application/offer-service.js';
+import { RecommendationService, type WhatShouldIBuyResult } from '../application/recommendation-service.js';
 import { syncProvider } from '../application/sync-provider.js';
 import { WishlistService, type CreateWishlistEntryInput } from '../application/wishlist-service.js';
 import { openDatabase } from '../persistence/sqlite/database.js';
@@ -18,6 +19,7 @@ import {
   SqliteWishlistRepository,
 } from '../persistence/sqlite/repositories.js';
 import { DeterministicDealProvider } from '../providers/deterministic/deterministic-provider.js';
+import { DealScoreV1Policy } from '../domain/recommendations/deal-score.js';
 
 export interface Application {
   syncDeterministicProvider(observedAt: string): Promise<{
@@ -37,6 +39,7 @@ export interface Application {
   listAccessRecords(filter?: { productVariantId?: string }): Promise<AccessRecord[]>;
   updateAccessRecord(record: AccessRecord): Promise<AccessRecord | null>;
   removeAccessRecord(accessRecordId: string): Promise<boolean>;
+  whatShouldIBuy(): Promise<WhatShouldIBuyResult>;
   close(): void;
 }
 
@@ -44,6 +47,7 @@ export function createApplication(input: {
   databasePath: string;
   country: string;
   comparisonCurrency: string;
+  clock?: () => string;
 }): Application {
   const country = normalizeCountry(input.country);
   const comparisonCurrency = normalizeCurrency(input.comparisonCurrency);
@@ -64,6 +68,15 @@ export function createApplication(input: {
   const offerService = new OfferService(catalogRepository, offerRepository, country, comparisonCurrency);
   const wishlistService = new WishlistService(wishlistRepository);
   const accessService = new AccessService(accessRepository, catalogRepository);
+  const recommendationService = new RecommendationService({
+    wishlistRepository,
+    catalogRepository,
+    accessRepository,
+    offerService,
+    policy: new DealScoreV1Policy(),
+    clock: input.clock ?? (() => new Date().toISOString()),
+    comparisonCurrency,
+  });
   const deterministicProvider = new DeterministicDealProvider();
 
   return {
@@ -87,6 +100,7 @@ export function createApplication(input: {
     listAccessRecords: (filter) => accessService.list(filter),
     updateAccessRecord: (record) => accessService.update(record),
     removeAccessRecord: (accessRecordId) => accessService.remove(accessRecordId),
+    whatShouldIBuy: () => recommendationService.whatShouldIBuy(),
     close: () => opened.close(),
   };
 }

@@ -1,6 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { Application } from '../composition/root.js';
+import { accessRecordSchema } from '../domain/access/types.js';
 import { wishlistEntrySchema } from '../domain/wishlist/types.js';
 import { invalidInputResult, runTool } from './tool-results.js';
 
@@ -21,6 +22,20 @@ const providerSyncInputSchema = safeInputSchema({ observedAt: z.string().datetim
 const wishlistListInputSchema = safeInputSchema({});
 const wishlistUpdateInputSchema = safeInputSchema(wishlistEntrySchema.shape);
 const wishlistRemoveInputSchema = safeInputSchema({ wishlistEntryId: z.string().uuid() });
+const accessCreateInputSchema = safeInputSchema({
+  productVariantId: accessRecordSchema.shape.productVariantId,
+  state: accessRecordSchema.shape.state,
+  provenance: accessRecordSchema.shape.provenance,
+  activeFrom: accessRecordSchema.shape.activeFrom.optional().default(null),
+  activeUntil: accessRecordSchema.shape.activeUntil.optional().default(null),
+  now: accessRecordSchema.shape.createdAt,
+});
+const accessListInputSchema = safeInputSchema({
+  productVariantId: accessRecordSchema.shape.productVariantId.optional(),
+});
+const accessUpdateInputSchema = safeInputSchema(accessRecordSchema.shape);
+const accessRemoveInputSchema = safeInputSchema({ accessRecordId: z.string().uuid() });
+const whatShouldIBuyInputSchema = safeInputSchema({});
 
 const localReadOnlyAnnotations = {
   readOnlyHint: true,
@@ -92,6 +107,36 @@ export function createMcpServer(application: Application): McpServer {
     inputSchema: wishlistRemoveInputSchema,
     annotations: { ...localMutationAnnotations, destructiveHint: true, idempotentHint: true },
   }, (input) => runValidatedTool(input, ({ wishlistEntryId }) => application.removeWishlistEntry(wishlistEntryId)));
+
+  server.registerTool('access_create', {
+    description: 'Creates a manual local access record.',
+    inputSchema: accessCreateInputSchema,
+    annotations: localMutationAnnotations,
+  }, (input) => runValidatedTool(input, (entry) => application.createAccessRecord(entry)));
+
+  server.registerTool('access_list', {
+    description: 'Lists local access records.',
+    inputSchema: accessListInputSchema,
+    annotations: localReadOnlyAnnotations,
+  }, (input) => runValidatedTool(input, (filter) => application.listAccessRecords(filter)));
+
+  server.registerTool('access_update', {
+    description: 'Updates an existing local access record.',
+    inputSchema: accessUpdateInputSchema,
+    annotations: { ...localMutationAnnotations, idempotentHint: true },
+  }, (input) => runValidatedTool(input, (record) => application.updateAccessRecord(record)));
+
+  server.registerTool('access_remove', {
+    description: 'Removes a local access record.',
+    inputSchema: accessRemoveInputSchema,
+    annotations: { ...localMutationAnnotations, destructiveHint: true, idempotentHint: true },
+  }, (input) => runValidatedTool(input, ({ accessRecordId }) => application.removeAccessRecord(accessRecordId)));
+
+  server.registerTool('what_should_i_buy', {
+    description: 'Recommends wishlist products worth buying now.',
+    inputSchema: whatShouldIBuyInputSchema,
+    annotations: localReadOnlyAnnotations,
+  }, (input) => runValidatedTool(input, () => application.whatShouldIBuy()));
 
   return server;
 }

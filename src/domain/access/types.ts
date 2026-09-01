@@ -22,7 +22,7 @@ export type PurchaseAccess =
 
 const toEpoch = (timestamp: string): number => Date.parse(timestamp);
 
-export const accessRecordSchema: z.ZodType<AccessRecord> = z.object({
+export const accessRecordSchema = z.object({
   id: z.uuid(),
   productVariantId: z.uuid(),
   state: z.enum(['owned', 'subscription_access', 'loan']),

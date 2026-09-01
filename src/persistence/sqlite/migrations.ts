@@ -4,6 +4,7 @@ import { DatabaseSync } from 'node:sqlite';
 
 interface Migration {
   readonly checksum: string;
+  readonly requiresForeignKeysDisabled: boolean;
   readonly sql: string;
   readonly version: number;
 }
@@ -16,6 +17,7 @@ interface AppliedMigration {
 const migrations: readonly Migration[] = [
   createMigration(1, new URL('./migrations/001_initial.sql', import.meta.url)),
   createMigration(2, new URL('./migrations/002_contract_alignment.sql', import.meta.url)),
+  createMigration(3, new URL('./migrations/003_product_variant_region_identity.sql', import.meta.url), true),
 ];
 
 export function applyMigrations(database: DatabaseSync): void {
@@ -39,11 +41,12 @@ export function applyMigrations(database: DatabaseSync): void {
   }
 }
 
-function createMigration(version: number, source: URL): Migration {
+function createMigration(version: number, source: URL, requiresForeignKeysDisabled = false): Migration {
   const sql = readFileSync(source, 'utf8');
 
   return {
     checksum: createHash('sha256').update(sql, 'utf8').digest('hex'),
+    requiresForeignKeysDisabled,
     sql,
     version,
   };
@@ -66,10 +69,17 @@ function readAppliedMigrations(database: DatabaseSync): AppliedMigration[] {
 }
 
 function applyMigration(database: DatabaseSync, migration: Migration): void {
+  if (migration.requiresForeignKeysDisabled) {
+    database.exec('PRAGMA foreign_keys = OFF');
+  }
   database.exec('BEGIN IMMEDIATE');
 
   try {
     database.exec(migration.sql);
+    const foreignKeyViolations = database.prepare('PRAGMA foreign_key_check').all();
+    if (foreignKeyViolations.length > 0) {
+      throw new Error(`Migration ${migration.version} introduced foreign key violations`);
+    }
     database.prepare(
       'INSERT INTO schema_migrations (version, checksum, applied_at) VALUES (?, ?, ?)',
     ).run(migration.version, migration.checksum, new Date().toISOString());
@@ -77,5 +87,9 @@ function applyMigration(database: DatabaseSync, migration: Migration): void {
   } catch (error) {
     database.exec('ROLLBACK');
     throw error;
+  } finally {
+    if (migration.requiresForeignKeysDisabled) {
+      database.exec('PRAGMA foreign_keys = ON');
+    }
   }
 }

@@ -46,13 +46,13 @@ function seedFreshOfferGraph(database: DatabaseSync): void {
 }
 
 describe('contract alignment migration', () => {
-  test('migrates a fresh database to version two with every Task 3 field', () => {
+  test('migrates a fresh database to version three with every Task 3 field', () => {
     const temporaryDatabase = createTemporaryDatabase();
     const opened = openDatabase(temporaryDatabase.path);
 
     try {
       expect(opened.database.prepare('SELECT version FROM schema_migrations ORDER BY version').all())
-        .toEqual([{ version: 1 }, { version: 2 }]);
+        .toEqual([{ version: 1 }, { version: 2 }, { version: 3 }]);
       expect(columnNames(opened.database, 'product_variants')).toEqual(expect.arrayContaining(['region_code']));
       expect(columnNames(opened.database, 'offers')).toEqual(expect.arrayContaining([
         'source_observation_key', 'normalized_amount_minor', 'normalized_currency',
@@ -77,6 +77,7 @@ describe('contract alignment migration', () => {
       seedVersionOneGraph(database);
       applyMigrations(database);
 
+      expect(database.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
       expect(database.prepare(`
         SELECT product_variants.region_code, offers.region_status, offers.shipping_known,
           offers.taxes_known, wishlist_entries.priority, wishlist_entries.updated_at,

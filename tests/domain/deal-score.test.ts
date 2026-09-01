@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import {
+  DEAL_SCORE_V1_CONSTANTS,
   DealScoreV1Policy,
   verdictFor,
   type DealScoreCandidate,
@@ -80,6 +81,20 @@ describe('DealScoreV1Policy', () => {
     expect(result.contributions[0]).toMatchObject({ factor: 'price_history', points });
   });
 
+  test('awards the historical-low band when the final price is below the low', () => {
+    const result = policy.evaluate(candidate({
+      offer: { ...candidate().offer, normalizedFinalPrice: { amountMinor: 9_999, currency: 'COP' } },
+    }));
+    expect(result.contributions[0]).toMatchObject({ factor: 'price_history', points: 40 });
+  });
+
+  test('treats historical price in another currency as unavailable', () => {
+    const result = policy.evaluate(candidate({ historicalLow: { amountMinor: 1, currency: 'USD' } }));
+    expect(result.contributions[0]).toEqual({
+      factor: 'price_history', points: 10, rationale: 'No comparable price history is available.',
+    });
+  });
+
   test.each([[1, 5], [2, 15], [3, 25]] as const)('assigns the fixed points for priority %i', (priority, points) => {
     expect(policy.evaluate(candidate({ wishlistEntry: { ...candidate().wishlistEntry, priority } })).contributions[1])
       .toMatchObject({ factor: 'wishlist_priority', points });
@@ -105,6 +120,11 @@ describe('DealScoreV1Policy', () => {
       factor: 'target_price', points: 0,
       rationale: 'Target price is in USD, not comparison currency COP.',
     });
+  });
+
+  test('awards zero target-price points when no target is set', () => {
+    const result = policy.evaluate(candidate({ wishlistEntry: { ...candidate().wishlistEntry, targetPrice: null } }));
+    expect(result.contributions[2]).toEqual({ factor: 'target_price', points: 0, rationale: 'No target price is set.' });
   });
 
   test.each([['high', 5], ['medium', 3], ['low', 1]] as const)('assigns the fixed points for %s confidence', (confidence, points) => {
@@ -146,6 +166,50 @@ describe('DealScoreV1Policy', () => {
     } }))).toThrow('Owned candidates must be excluded before deal scoring');
   });
 
+  test.each([
+    ['missing', null],
+    ['wrong-currency', { amountMinor: 10_000, currency: 'USD' }],
+  ] as const)('rejects a %s normalized final price before scoring', (_name, normalizedFinalPrice) => {
+    expect(() => policy.evaluate(candidate({ offer: { ...candidate().offer, normalizedFinalPrice } })))
+      .toThrow('A reliable COP final price is required before deal scoring');
+  });
+
+  test('uses safe integer minor units at the largest supported value', () => {
+    const amountMinor = Number.MAX_SAFE_INTEGER;
+    const result = policy.evaluate(candidate({
+      offer: { ...candidate().offer, normalizedFinalPrice: { amountMinor, currency: 'COP' } },
+      historicalLow: { amountMinor, currency: 'COP' },
+      wishlistEntry: { ...candidate().wishlistEntry, targetPrice: { amountMinor, currency: 'COP' } },
+    }));
+    expect(result.score).toBe(100);
+  });
+
+  test('rejects unsafe integer minor units before scoring', () => {
+    expect(() => policy.evaluate(candidate({
+      offer: {
+        ...candidate().offer,
+        normalizedFinalPrice: { amountMinor: Number.MAX_SAFE_INTEGER + 1, currency: 'COP' },
+      },
+    }))).toThrow('Minor-unit amount must be a safe integer');
+  });
+
+  test('snapshots injected constants so post-construction mutation cannot affect scoring', () => {
+    const injected = {
+      ...DEAL_SCORE_V1_CONSTANTS,
+      priority: { ...DEAL_SCORE_V1_CONSTANTS.priority, 3: 7 },
+    };
+    const injectedPolicy = new DealScoreV1Policy(injected);
+    injected.priority[3] = 99;
+    expect(injectedPolicy.evaluate(candidate()).contributions[1]).toMatchObject({ points: 7 });
+  });
+
+  test('deep-freezes canonical constants and preserves their score behavior', () => {
+    expect(Object.isFrozen(DEAL_SCORE_V1_CONSTANTS)).toBe(true);
+    expect(Object.isFrozen(DEAL_SCORE_V1_CONSTANTS.priceHistory)).toBe(true);
+    expect(Reflect.set(DEAL_SCORE_V1_CONSTANTS.priority, 3, 99)).toBe(false);
+    expect(policy.evaluate(candidate()).contributions[1]).toMatchObject({ points: 25 });
+  });
+
   test('clamps scores at 0 and 100', () => {
     const high = policy.evaluate(candidate());
     const low = policy.evaluate(candidate({
@@ -169,5 +233,24 @@ describe('DealScoreV1Policy', () => {
     expect(result.negativeFactors).toEqual([expect.objectContaining({ factor: 'temporary_access', points: -45 })]);
     expect(result.explanation).toContain('Deal score: 55/100 (neutral).');
     expect(result.explanation).toContain('Temporary access is active.');
+    const rationaleIndexes = result.contributions.map(({ rationale }) => result.explanation.indexOf(rationale));
+    expect(rationaleIndexes).toEqual([...rationaleIndexes].sort((left, right) => left - right));
+  });
+
+  test('returns deeply immutable, non-aliased factor views', () => {
+    const result = policy.evaluate(candidate({ purchaseAccess: {
+      kind: 'temporary_access', activeRecords: [{ id: ids.access, productVariantId: ids.variant, state: 'loan', provenance: 'manual', activeFrom: null, activeUntil: null, createdAt: evaluatedAt, updatedAt: evaluatedAt }],
+    } }));
+    const originalContribution = result.contributions[0]!;
+    const originalExplanation = result.explanation;
+
+    expect(Object.isFrozen(result)).toBe(true);
+    expect(Object.isFrozen(result.contributions)).toBe(true);
+    expect(Object.isFrozen(result.positiveFactors)).toBe(true);
+    expect(result.contributions[0]).not.toBe(result.positiveFactors[0]);
+    expect(Reflect.set(result.positiveFactors[0]!, 'points', -999)).toBe(false);
+    expect(Reflect.set(result.contributions, 0, { factor: 'changed', points: 0, rationale: 'changed' })).toBe(false);
+    expect(result.contributions[0]).toEqual(originalContribution);
+    expect(result.explanation).toBe(originalExplanation);
   });
 });

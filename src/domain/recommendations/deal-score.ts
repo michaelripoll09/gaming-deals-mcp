@@ -6,9 +6,9 @@ import type { WishlistEntry } from '../wishlist/types.js';
 export type DealVerdict = 'exceptional_buy' | 'buy' | 'good_deal' | 'neutral' | 'wait' | 'skip';
 
 export interface DealScoreContribution {
-  factor: string;
-  points: number;
-  rationale: string;
+  readonly factor: string;
+  readonly points: number;
+  readonly rationale: string;
 }
 
 export interface DealScoreCandidate {
@@ -22,12 +22,12 @@ export interface DealScoreCandidate {
 }
 
 export interface DealScoreResult {
-  score: number;
-  verdict: DealVerdict;
-  contributions: DealScoreContribution[];
-  positiveFactors: DealScoreContribution[];
-  negativeFactors: DealScoreContribution[];
-  explanation: string;
+  readonly score: number;
+  readonly verdict: DealVerdict;
+  readonly contributions: readonly DealScoreContribution[];
+  readonly positiveFactors: readonly DealScoreContribution[];
+  readonly negativeFactors: readonly DealScoreContribution[];
+  readonly explanation: string;
 }
 
 export interface DealScorePolicy {
@@ -36,16 +36,16 @@ export interface DealScorePolicy {
 
 /** Fixed Deal Score v1 weights. Policies may receive this value explicitly in tests. */
 export interface DealScoreV1Constants {
-  priceHistory: { atOrBelowLow: number; withinFivePercent: number; withinFifteenPercent: number; unavailable: number };
-  priority: Record<WishlistEntry['priority'], number>;
-  target: { atOrBelowTarget: number; withinTenPercent: number; unavailableOrAbove: number };
-  confidence: Record<SourceConfidence, number>;
-  retailer: Record<RetailerClass, number>;
-  freshness: { withinTwentyFourHours: number; withinSeventyTwoHours: number; older: number };
-  temporaryAccess: number;
+  readonly priceHistory: Readonly<{ atOrBelowLow: number; withinFivePercent: number; withinFifteenPercent: number; unavailable: number }>;
+  readonly priority: Readonly<Record<WishlistEntry['priority'], number>>;
+  readonly target: Readonly<{ atOrBelowTarget: number; withinTenPercent: number; unavailableOrAbove: number }>;
+  readonly confidence: Readonly<Record<SourceConfidence, number>>;
+  readonly retailer: Readonly<Record<RetailerClass, number>>;
+  readonly freshness: Readonly<{ withinTwentyFourHours: number; withinSeventyTwoHours: number; older: number }>;
+  readonly temporaryAccess: number;
 }
 
-export const DEAL_SCORE_V1_CONSTANTS: DealScoreV1Constants = {
+export const DEAL_SCORE_V1_CONSTANTS: DealScoreV1Constants = deepFreeze({
   priceHistory: { atOrBelowLow: 40, withinFivePercent: 30, withinFifteenPercent: 20, unavailable: 10 },
   priority: { 1: 5, 2: 15, 3: 25 },
   target: { atOrBelowTarget: 20, withinTenPercent: 10, unavailableOrAbove: 0 },
@@ -53,10 +53,14 @@ export const DEAL_SCORE_V1_CONSTANTS: DealScoreV1Constants = {
   retailer: { first_party_storefront: 5, authorized_store: 4, physical_retailer: 3, marketplace: 1 },
   freshness: { withinTwentyFourHours: 5, withinSeventyTwoHours: 3, older: 0 },
   temporaryAccess: -45,
-};
+});
 
 export class DealScoreV1Policy implements DealScorePolicy {
-  constructor(private readonly constants: DealScoreV1Constants = DEAL_SCORE_V1_CONSTANTS) {}
+  private readonly constants: DealScoreV1Constants;
+
+  constructor(constants: DealScoreV1Constants = DEAL_SCORE_V1_CONSTANTS) {
+    this.constants = snapshotConstants(constants);
+  }
 
   evaluate(candidate: DealScoreCandidate): DealScoreResult {
     if (candidate.purchaseAccess.kind === 'owned') {
@@ -65,6 +69,9 @@ export class DealScoreV1Policy implements DealScorePolicy {
 
     const comparisonCurrency = candidate.comparisonCurrency.trim().toUpperCase();
     const finalPrice = comparisonFinalPrice(candidate.offer, comparisonCurrency);
+    assertSafeMoney(finalPrice);
+    if (candidate.historicalLow !== null) assertSafeMoney(candidate.historicalLow);
+    if (candidate.wishlistEntry.targetPrice !== null) assertSafeMoney(candidate.wishlistEntry.targetPrice);
     const evaluatedAt = epochFor(candidate.evaluatedAt, 'evaluation time');
     const contributions = [
       priceHistoryContribution(finalPrice, candidate.historicalLow, comparisonCurrency, this.constants),
@@ -85,17 +92,18 @@ export class DealScoreV1Policy implements DealScorePolicy {
 
     const score = clamp(contributions.reduce((total, { points }) => total + points, 0), 0, 100);
     const verdict = verdictFor(score);
-    const positiveFactors = contributions.filter(({ points }) => points > 0);
-    const negativeFactors = contributions.filter(({ points }) => points < 0);
+    const immutableContributions = immutableContributionsFor(contributions);
+    const positiveFactors = immutableContributionsFor(contributions.filter(({ points }) => points > 0));
+    const negativeFactors = immutableContributionsFor(contributions.filter(({ points }) => points < 0));
 
-    return {
+    return Object.freeze({
       score,
       verdict,
-      contributions,
+      contributions: immutableContributions,
       positiveFactors,
       negativeFactors,
       explanation: `Deal score: ${score}/100 (${verdict}). Product variant: ${candidate.productVariant.id}. ${contributions.map(({ rationale }) => rationale).join(' ')}`,
-    };
+    });
   }
 }
 
@@ -190,6 +198,37 @@ function isAtMost(left: number, right: number): boolean {
 
 function isWithinPercentAbove(priceMinor: number, baselineMinor: number, percent: number): boolean {
   return BigInt(priceMinor) * 100n <= BigInt(baselineMinor) * BigInt(100 + percent);
+}
+
+function assertSafeMoney(money: Money): void {
+  if (!Number.isSafeInteger(money.amountMinor)) {
+    throw new Error('Minor-unit amount must be a safe integer');
+  }
+}
+
+function immutableContributionsFor(contributions: DealScoreContribution[]): readonly DealScoreContribution[] {
+  return Object.freeze(contributions.map((contribution) => Object.freeze({ ...contribution })));
+}
+
+function snapshotConstants(constants: DealScoreV1Constants): DealScoreV1Constants {
+  return deepFreeze({
+    priceHistory: { ...constants.priceHistory },
+    priority: { ...constants.priority },
+    target: { ...constants.target },
+    confidence: { ...constants.confidence },
+    retailer: { ...constants.retailer },
+    freshness: { ...constants.freshness },
+    temporaryAccess: constants.temporaryAccess,
+  });
+}
+
+function deepFreeze<T extends object>(value: T): T {
+  for (const nested of Object.values(value)) {
+    if (nested !== null && typeof nested === 'object' && !Object.isFrozen(nested)) {
+      deepFreeze(nested);
+    }
+  }
+  return Object.freeze(value);
 }
 
 function epochFor(timestamp: string, label: string): number {

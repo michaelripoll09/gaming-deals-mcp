@@ -13,7 +13,7 @@ describe('openDatabase', () => {
       const first = openDatabase(temporaryDatabase.path);
       try {
         expect(first.database.prepare('SELECT version FROM schema_migrations ORDER BY version').all())
-          .toEqual([{ version: 1 }, { version: 2 }, { version: 3 }]);
+          .toEqual([{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }]);
       } finally {
         first.close();
       }
@@ -21,7 +21,7 @@ describe('openDatabase', () => {
       const second = openDatabase(temporaryDatabase.path);
       try {
         expect(second.database.prepare('SELECT version FROM schema_migrations ORDER BY version').all())
-          .toEqual([{ version: 1 }, { version: 2 }, { version: 3 }]);
+          .toEqual([{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }]);
       } finally {
         second.close();
       }
@@ -96,7 +96,7 @@ describe('openDatabase', () => {
 
     const database = new DatabaseSync(temporaryDatabase.path);
     try {
-      database.exec("UPDATE schema_migrations SET checksum = 'changed' WHERE version = 3");
+      database.exec("UPDATE schema_migrations SET checksum = 'changed' WHERE version = 4");
     } finally {
       database.close();
     }

@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import type { CatalogEntry } from '../../src/domain/catalog/types.js';
+import type { AccessRecord } from '../../src/domain/access/types.js';
 import type { Offer, PriceObservation, ProviderListing } from '../../src/domain/offers/types.js';
 import { PublicError } from '../../src/errors/public-error.js';
 import { createDeterministicSyncFixture } from '../../src/providers/deterministic/fixtures.js';
@@ -7,6 +8,7 @@ import { openDatabase } from '../../src/persistence/sqlite/database.js';
 import {
   createSqliteTransactionRunner,
   SqliteCatalogRepository,
+  SqliteAccessRepository,
   SqliteOfferRepository,
   SqliteWishlistRepository,
 } from '../../src/persistence/sqlite/repositories.js';
@@ -171,7 +173,177 @@ describe('SQLite repositories', () => {
       temporary.cleanup();
     }
   });
+
+  test('persists access claims and batch-loads only requested variants', async () => {
+    const temporary = createTemporaryDatabase();
+    const opened = openDatabase(temporary.path);
+    try {
+      const catalog = new SqliteCatalogRepository(opened.database);
+      const repository = new SqliteAccessRepository(opened.database);
+      const fixture = createDeterministicSyncFixture();
+      const owned = accessRecord({
+        id: '00000000-0000-4000-8000-000000000201',
+        productVariantId: fixture.catalog[0]!.productVariant.id,
+        state: 'owned',
+      });
+      const subscriptionForOtherVariant = accessRecord({
+        id: '00000000-0000-4000-8000-000000000202',
+        productVariantId: fixture.catalog[1]!.productVariant.id,
+        state: 'subscription_access',
+      });
+      await catalog.upsertCatalog(fixture.catalog[0]!);
+      await catalog.upsertCatalog(fixture.catalog[1]!);
+
+      await repository.create(owned);
+      await repository.create(subscriptionForOtherVariant);
+
+      expect(await repository.listByProductVariantIds([owned.productVariantId])).toEqual([owned]);
+      expect(await repository.listByProductVariantIds([])).toEqual([]);
+    } finally {
+      opened.close();
+      temporary.cleanup();
+    }
+  });
+
+  test('rejects an unknown canonical product variant', async () => {
+    const temporary = createTemporaryDatabase();
+    const opened = openDatabase(temporary.path);
+    try {
+      const repository = new SqliteAccessRepository(opened.database);
+      const ownedWithUnknownVariant = accessRecord({
+        id: '00000000-0000-4000-8000-000000000203',
+        productVariantId: '00000000-0000-4000-8000-000000000299',
+        state: 'owned',
+      });
+
+      await expect(repository.create(ownedWithUnknownVariant)).rejects.toThrow(/FOREIGN KEY constraint failed/);
+    } finally {
+      opened.close();
+      temporary.cleanup();
+    }
+  });
+
+  test('round-trips nullable intervals in deterministic list and filter order', async () => {
+    const temporary = createTemporaryDatabase();
+    const opened = openDatabase(temporary.path);
+    try {
+      const catalog = new SqliteCatalogRepository(opened.database);
+      const repository = new SqliteAccessRepository(opened.database);
+      const fixture = createDeterministicSyncFixture();
+      await catalog.upsertCatalog(fixture.catalog[0]!);
+      await catalog.upsertCatalog(fixture.catalog[1]!);
+      const first = accessRecord({
+        id: '00000000-0000-4000-8000-000000000204',
+        productVariantId: fixture.catalog[0]!.productVariant.id,
+        activeFrom: null,
+        activeUntil: null,
+      });
+      const second = accessRecord({
+        id: '00000000-0000-4000-8000-000000000205',
+        productVariantId: fixture.catalog[0]!.productVariant.id,
+        activeFrom: '2026-09-01T15:00:00+03:00',
+        activeUntil: '2026-09-01T12:30:00Z',
+      });
+      const otherVariant = accessRecord({
+        id: '00000000-0000-4000-8000-000000000206',
+        productVariantId: fixture.catalog[1]!.productVariant.id,
+      });
+
+      await repository.create(second);
+      await repository.create(otherVariant);
+      await repository.create(first);
+
+      expect(await repository.list()).toEqual([first, second, otherVariant]);
+      expect(await repository.list({ productVariantId: first.productVariantId })).toEqual([first, second]);
+    } finally {
+      opened.close();
+      temporary.cleanup();
+    }
+  });
+
+  test('updates, removes, and rolls back access records without creating unknown rows', async () => {
+    const temporary = createTemporaryDatabase();
+    const opened = openDatabase(temporary.path);
+    try {
+      const catalog = new SqliteCatalogRepository(opened.database);
+      const repository = new SqliteAccessRepository(opened.database);
+      const runInTransaction = createSqliteTransactionRunner(opened.database);
+      const fixture = createDeterministicSyncFixture();
+      await catalog.upsertCatalog(fixture.catalog[0]!);
+      const persisted = accessRecord({
+        id: '00000000-0000-4000-8000-000000000207',
+        productVariantId: fixture.catalog[0]!.productVariant.id,
+      });
+      const unknown = accessRecord({ id: '00000000-0000-4000-8000-000000000208' });
+      await repository.create(persisted);
+
+      const updated = { ...persisted, state: 'owned' as const, updatedAt: '2026-09-02T00:00:00.000Z' };
+      expect(await repository.update(updated)).toEqual(updated);
+      expect(await repository.update(unknown)).toBeNull();
+      expect(await repository.remove(unknown.id)).toBe(false);
+
+      const rolledBack = accessRecord({
+        id: '00000000-0000-4000-8000-000000000209',
+        productVariantId: fixture.catalog[0]!.productVariant.id,
+      });
+      await expect(runInTransaction(async () => {
+        await repository.create(rolledBack);
+        throw new Error('force rollback');
+      })).rejects.toThrow('force rollback');
+      expect(await repository.list()).toEqual([updated]);
+
+      expect(await repository.remove(persisted.id)).toBe(true);
+      expect(await repository.list()).toEqual([]);
+    } finally {
+      opened.close();
+      temporary.cleanup();
+    }
+  });
+
+  test('returns detached access records and preserves them across reopen', async () => {
+    const temporary = createTemporaryDatabase();
+    const fixture = createDeterministicSyncFixture();
+    const record = accessRecord({
+      id: '00000000-0000-4000-8000-000000000210',
+      productVariantId: fixture.catalog[0]!.productVariant.id,
+    });
+    const first = openDatabase(temporary.path);
+    try {
+      const catalog = new SqliteCatalogRepository(first.database);
+      const repository = new SqliteAccessRepository(first.database);
+      await catalog.upsertCatalog(fixture.catalog[0]!);
+      await repository.create(record);
+      const result = await repository.list();
+      expect(result[0]).not.toBe(record);
+      result[0]!.state = 'owned';
+      expect(await repository.list()).toEqual([record]);
+    } finally {
+      first.close();
+    }
+
+    const second = openDatabase(temporary.path);
+    try {
+      expect(await new SqliteAccessRepository(second.database).list()).toEqual([record]);
+    } finally {
+      second.close();
+      temporary.cleanup();
+    }
+  });
 });
+
+function accessRecord(overrides: Partial<AccessRecord> = {}): AccessRecord {
+  return {
+    id: '00000000-0000-4000-8000-000000000200',
+    productVariantId: '00000000-0000-4000-8000-000000000199',
+    state: 'loan',
+    provenance: 'manual',
+    activeFrom: null,
+    activeUntil: null,
+    createdAt: '2026-09-01T00:00:00.000Z',
+    updatedAt: '2026-09-01T00:00:00.000Z',
+    ...overrides,
+  };
+}
 
 async function persistFixture(
   catalogRepository: SqliteCatalogRepository,

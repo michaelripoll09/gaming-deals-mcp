@@ -10,9 +10,11 @@ import {
   type ProviderListing,
 } from '../../domain/offers/types.js';
 import { wishlistEntrySchema, type WishlistEntry } from '../../domain/wishlist/types.js';
+import { accessRecordSchema, type AccessRecord } from '../../domain/access/types.js';
 import { PublicError } from '../../errors/public-error.js';
 import type {
   CatalogRepository,
+  AccessRepository,
   OfferRepository,
   WishlistRepository,
 } from '../../application/ports.js';
@@ -410,6 +412,114 @@ export class SqliteWishlistRepository implements WishlistRepository {
   }
 }
 
+export class SqliteAccessRepository implements AccessRepository {
+  private readonly insertRecord: StatementSync;
+  private readonly selectAll: StatementSync;
+  private readonly selectByProductVariantId: StatementSync;
+  private readonly selectById: StatementSync;
+  private readonly updateRecord: StatementSync;
+  private readonly deleteRecord: StatementSync;
+  private readonly batchStatements = new Map<number, StatementSync>();
+
+  constructor(private readonly database: DatabaseSync) {
+    this.insertRecord = database.prepare(`
+      INSERT INTO access_records (
+        id, product_variant_id, state, provenance, active_from, active_until, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    const select = `
+      SELECT id, product_variant_id AS productVariantId, state, provenance,
+        active_from AS activeFrom, active_until AS activeUntil,
+        created_at AS createdAt, updated_at AS updatedAt
+      FROM access_records
+    `;
+    const orderBy = ' ORDER BY product_variant_id, active_from, active_until, id';
+    this.selectAll = database.prepare(`${select}${orderBy}`);
+    this.selectByProductVariantId = database.prepare(`${select} WHERE product_variant_id = ?${orderBy}`);
+    this.selectById = database.prepare(`${select} WHERE id = ?`);
+    this.updateRecord = database.prepare(`
+      UPDATE access_records SET
+        product_variant_id = ?,
+        state = ?,
+        provenance = ?,
+        active_from = ?,
+        active_until = ?,
+        updated_at = ?
+      WHERE id = ?
+    `);
+    this.deleteRecord = database.prepare('DELETE FROM access_records WHERE id = ?');
+  }
+
+  async create(record: AccessRecord): Promise<void> {
+    this.insertRecord.run(
+      record.id,
+      record.productVariantId,
+      record.state,
+      record.provenance,
+      record.activeFrom,
+      record.activeUntil,
+      record.createdAt,
+      record.updatedAt,
+    );
+  }
+
+  async list(filter?: { productVariantId?: string }): Promise<AccessRecord[]> {
+    const rows = filter?.productVariantId === undefined
+      ? this.selectAll.all()
+      : this.selectByProductVariantId.all(filter.productVariantId);
+    return rows.map((row) => mapAccessRecord(asRow(row)));
+  }
+
+  async update(record: AccessRecord): Promise<AccessRecord | null> {
+    const updated = this.updateRecord.run(
+      record.productVariantId,
+      record.state,
+      record.provenance,
+      record.activeFrom,
+      record.activeUntil,
+      record.updatedAt,
+      record.id,
+    );
+    return Number(updated.changes) === 0 ? null : this.getRequired(record.id);
+  }
+
+  async remove(accessRecordId: string): Promise<boolean> {
+    return Number(this.deleteRecord.run(accessRecordId).changes) > 0;
+  }
+
+  async listByProductVariantIds(productVariantIds: string[]): Promise<AccessRecord[]> {
+    if (productVariantIds.length === 0) return [];
+
+    const statement = this.getBatchStatement(productVariantIds.length);
+    return statement.all(...productVariantIds).map((row) => mapAccessRecord(asRow(row)));
+  }
+
+  private getRequired(accessRecordId: string): AccessRecord {
+    const row = this.selectById.get(accessRecordId);
+    if (row === undefined) {
+      throw new Error('Access record was not persisted');
+    }
+    return mapAccessRecord(asRow(row));
+  }
+
+  private getBatchStatement(count: number): StatementSync {
+    const existing = this.batchStatements.get(count);
+    if (existing !== undefined) return existing;
+
+    const placeholders = Array.from({ length: count }, () => '?').join(', ');
+    const statement = this.database.prepare(`
+      SELECT id, product_variant_id AS productVariantId, state, provenance,
+        active_from AS activeFrom, active_until AS activeUntil,
+        created_at AS createdAt, updated_at AS updatedAt
+      FROM access_records
+      WHERE product_variant_id IN (${placeholders})
+      ORDER BY product_variant_id, active_from, active_until, id
+    `);
+    this.batchStatements.set(count, statement);
+    return statement;
+  }
+}
+
 function mapProductVariant(row: Row): ProductVariant {
   return productVariantSchema.parse({
     id: row.id,
@@ -467,6 +577,19 @@ function mapWishlistEntry(row: Row): WishlistEntry {
     priority: row.priority,
     targetPrice: mapNullableMoney(row.targetAmountMinor, row.targetCurrency),
     notes: row.notes,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  });
+}
+
+function mapAccessRecord(row: Row): AccessRecord {
+  return accessRecordSchema.parse({
+    id: row.id,
+    productVariantId: row.productVariantId,
+    state: row.state,
+    provenance: row.provenance,
+    activeFrom: row.activeFrom,
+    activeUntil: row.activeUntil,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   });

@@ -18,6 +18,7 @@ const migrations: readonly Migration[] = [
   createMigration(1, new URL('./migrations/001_initial.sql', import.meta.url)),
   createMigration(2, new URL('./migrations/002_contract_alignment.sql', import.meta.url)),
   createMigration(3, new URL('./migrations/003_product_variant_region_identity.sql', import.meta.url), true),
+  createMigration(4, new URL('./migrations/004_access_records.sql', import.meta.url)),
 ];
 
 export function applyMigrations(database: DatabaseSync): void {

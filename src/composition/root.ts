@@ -1,8 +1,10 @@
+import type { AccessRecord } from '../domain/access/types.js';
 import type { ProductVariant } from '../domain/catalog/types.js';
 import type { PriceObservation } from '../domain/offers/types.js';
 import type { OfferComparisonResult } from '../domain/pricing/compare-offers.js';
 import type { WishlistEntry } from '../domain/wishlist/types.js';
 import { PublicError } from '../errors/public-error.js';
+import { AccessService, type CreateAccessRecordInput } from '../application/access-service.js';
 import { CatalogService } from '../application/catalog-service.js';
 import { OfferService } from '../application/offer-service.js';
 import { syncProvider } from '../application/sync-provider.js';
@@ -10,6 +12,7 @@ import { WishlistService, type CreateWishlistEntryInput } from '../application/w
 import { openDatabase } from '../persistence/sqlite/database.js';
 import {
   createSqliteTransactionRunner,
+  SqliteAccessRepository,
   SqliteCatalogRepository,
   SqliteOfferRepository,
   SqliteWishlistRepository,
@@ -30,6 +33,10 @@ export interface Application {
   listWishlistEntries(): Promise<WishlistEntry[]>;
   updateWishlistEntry(entry: WishlistEntry): Promise<WishlistEntry | null>;
   removeWishlistEntry(wishlistEntryId: string): Promise<boolean>;
+  createAccessRecord(input: CreateAccessRecordInput): Promise<AccessRecord>;
+  listAccessRecords(filter?: { productVariantId?: string }): Promise<AccessRecord[]>;
+  updateAccessRecord(record: AccessRecord): Promise<AccessRecord | null>;
+  removeAccessRecord(accessRecordId: string): Promise<boolean>;
   close(): void;
 }
 
@@ -51,10 +58,12 @@ export function createApplication(input: {
   const catalogRepository = new SqliteCatalogRepository(opened.database);
   const offerRepository = new SqliteOfferRepository(opened.database, country);
   const wishlistRepository = new SqliteWishlistRepository(opened.database);
+  const accessRepository = new SqliteAccessRepository(opened.database);
   const runInTransaction = createSqliteTransactionRunner(opened.database);
   const catalogService = new CatalogService(catalogRepository);
   const offerService = new OfferService(catalogRepository, offerRepository, country, comparisonCurrency);
   const wishlistService = new WishlistService(wishlistRepository);
+  const accessService = new AccessService(accessRepository, catalogRepository);
   const deterministicProvider = new DeterministicDealProvider();
 
   return {
@@ -74,6 +83,10 @@ export function createApplication(input: {
     listWishlistEntries: () => wishlistService.list(),
     updateWishlistEntry: (entry) => wishlistService.update(entry),
     removeWishlistEntry: (wishlistEntryId) => wishlistService.remove(wishlistEntryId),
+    createAccessRecord: (accessInput) => accessService.create(accessInput),
+    listAccessRecords: (filter) => accessService.list(filter),
+    updateAccessRecord: (record) => accessService.update(record),
+    removeAccessRecord: (accessRecordId) => accessService.remove(accessRecordId),
     close: () => opened.close(),
   };
 }

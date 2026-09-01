@@ -95,6 +95,15 @@ describe('DealScoreV1Policy', () => {
     });
   });
 
+  test('treats unsafe historical price in another currency as unavailable without comparing it', () => {
+    const result = policy.evaluate(candidate({
+      historicalLow: { amountMinor: Number.MAX_SAFE_INTEGER + 1, currency: 'USD' },
+    }));
+    expect(result.contributions[0]).toEqual({
+      factor: 'price_history', points: 10, rationale: 'No comparable price history is available.',
+    });
+  });
+
   test.each([[1, 5], [2, 15], [3, 25]] as const)('assigns the fixed points for priority %i', (priority, points) => {
     expect(policy.evaluate(candidate({ wishlistEntry: { ...candidate().wishlistEntry, priority } })).contributions[1])
       .toMatchObject({ factor: 'wishlist_priority', points });
@@ -115,6 +124,19 @@ describe('DealScoreV1Policy', () => {
   test('awards zero target-price points with a stable rationale when currencies differ', () => {
     const result = policy.evaluate(candidate({
       wishlistEntry: { ...candidate().wishlistEntry, targetPrice: { amountMinor: 10_000, currency: 'USD' } },
+    }));
+    expect(result.contributions[2]).toEqual({
+      factor: 'target_price', points: 0,
+      rationale: 'Target price is in USD, not comparison currency COP.',
+    });
+  });
+
+  test('awards the currency-mismatch target branch for an unsafe foreign-currency target', () => {
+    const result = policy.evaluate(candidate({
+      wishlistEntry: {
+        ...candidate().wishlistEntry,
+        targetPrice: { amountMinor: Number.MAX_SAFE_INTEGER + 1, currency: 'USD' },
+      },
     }));
     expect(result.contributions[2]).toEqual({
       factor: 'target_price', points: 0,

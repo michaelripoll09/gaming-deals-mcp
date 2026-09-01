@@ -70,8 +70,8 @@ export class DealScoreV1Policy implements DealScorePolicy {
     const comparisonCurrency = candidate.comparisonCurrency.trim().toUpperCase();
     const finalPrice = comparisonFinalPrice(candidate.offer, comparisonCurrency);
     assertSafeMoney(finalPrice);
-    if (candidate.historicalLow !== null) assertSafeMoney(candidate.historicalLow);
-    if (candidate.wishlistEntry.targetPrice !== null) assertSafeMoney(candidate.wishlistEntry.targetPrice);
+    if (candidate.historicalLow?.currency === comparisonCurrency) assertSafeMoney(candidate.historicalLow);
+    if (candidate.wishlistEntry.targetPrice?.currency === comparisonCurrency) assertSafeMoney(candidate.wishlistEntry.targetPrice);
     const evaluatedAt = epochFor(candidate.evaluatedAt, 'evaluation time');
     const contributions = [
       priceHistoryContribution(finalPrice, candidate.historicalLow, comparisonCurrency, this.constants),

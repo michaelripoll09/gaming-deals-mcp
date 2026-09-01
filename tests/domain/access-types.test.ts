@@ -42,6 +42,19 @@ describe('accessRecordSchema', () => {
     expect(accessRecordSchema.safeParse({ ...loan, createdAt: '2026-08-30' }).success).toBe(false);
   });
 
+  test('accepts intervals with exactly one null bound', () => {
+    expect(accessRecordSchema.safeParse({ ...loan, activeFrom: now, activeUntil: null }).success).toBe(true);
+    expect(accessRecordSchema.safeParse({ ...loan, activeFrom: null, activeUntil: now }).success).toBe(true);
+  });
+
+  test.each([
+    ['productVariantId', { productVariantId: 'not-a-uuid' }],
+    ['activeFrom', { activeFrom: 'not-an-iso-timestamp' }],
+    ['activeUntil', { activeUntil: 'not-an-iso-timestamp' }],
+  ])('rejects an invalid %s field', (_field, invalidValue) => {
+    expect(accessRecordSchema.safeParse({ ...loan, ...invalidValue }).success).toBe(false);
+  });
+
   test('rejects an interval whose end is not later than its start', () => {
     expect(() => accessRecordSchema.parse({ ...loan, activeFrom: now, activeUntil: now })).toThrow();
   });
@@ -75,6 +88,11 @@ describe('activeAccessRecords', () => {
     ], '2026-09-01T12:30:00Z');
 
     expect(result).toHaveLength(0);
+  });
+
+  test('rejects invalid evaluation timestamps instead of silently removing access', () => {
+    expect(() => activeAccessRecords([owned], 'not-an-iso-timestamp')).toThrow();
+    expect(() => derivePurchaseAccess([owned], 'not-an-iso-timestamp')).toThrow();
   });
 
   test('returns clones rather than references to active records', () => {

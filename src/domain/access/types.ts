@@ -38,7 +38,7 @@ export const accessRecordSchema: z.ZodType<AccessRecord> = z.object({
 ), { message: 'activeUntil must be later than activeFrom' });
 
 export function activeAccessRecords(records: AccessRecord[], evaluatedAt: string): AccessRecord[] {
-  const evaluatedAtEpoch = toEpoch(evaluatedAt);
+  const evaluatedAtEpoch = toEpoch(isoTimestampSchema.parse(evaluatedAt));
 
   return records
     .filter(({ activeFrom, activeUntil }) => (

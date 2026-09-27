@@ -43,12 +43,13 @@ Implement catalog domain types/validation, Game → Release → Edition → Prod
 ### C3 — Composition root and persistence coverage (done)
 - [x] Expose catalog capability minimally through CoreServices and public exports without changing database ownership semantics.
 - [x] Add graph persistence/restart, cross-platform identity, composition, and mapping roundtrip tests; include multiprocess migration startup regression.
-- [ ] Commit evidence: pending.
+- [x] Commit `0a98095109316224f03e14f715651c69b0692dc2` (`feat(catalog): expose catalog through core services`).
 - Evidence: strict TDD RED observed (focused suite: 4 failed, 41 passed) before CoreServices integration; GREEN/refactor focused suite passed 45 tests, 0 skipped. Typecheck, Prettier, `git diff --check`, and independent verification passed. Restart reconstructs Game→Release→Edition and distinct PC/PlayStation products, composition, and mapping.
 
 ### C4 — Documentation and release validation (in progress)
-- [ ] Update README minimally and honestly to describe Foundation + canonical catalog and later capabilities still absent.
-- [ ] Run requested local validation, review entire diff for scope/security/integrity issues, commit final work unit, push, create PR with approved labels and issue linkage.
+- [x] Update README minimally and honestly to describe Foundation + canonical catalog and later capabilities still absent.
+- [x] Run requested local validation: `npm ci`, full tests (45 passed, 0 skipped), typecheck, lint, format check, build, moderate audit (0 vulnerabilities), and `git diff --check` all pass. Initial lint run found an unused mapping projection alias; a behavior-preserving fix was made and all checks were rerun.
+- [ ] Review entire branch diff for scope/security/integrity issues, commit final work unit, push, create PR with approved labels and issue linkage.
 - [ ] Wait for all named hosted checks, inspect automated review comments/threads, address confirmed defects via TDD, and stop before merge.
 - [ ] Commit/PR evidence: pending.
 
@@ -75,8 +76,11 @@ Implement catalog domain types/validation, Game → Release → Edition → Prod
 - C1 initial commit `7890df5f0984603eeef4e06ff572574dd1a191e7`; correction commit `3226104e882e118a1ec9d2a440206f9a0df14d56`. The first independent review found the NUL delimiter collision; regression fixed with strict TDD and independently verified.
 - C2 migration/repository commit: `c52fcf6bafad79c2674dc5a22940f157ed7f7340`; focused migration/catalog suite and typecheck/format checks green.
 - C2 native review approved and acknowledged; it returned one explicitly non-blocking advisory warning `R3-001` at `src/catalog-repository.ts:244`, retained as a later informational follow-up.
-- C3 CoreServices/public API and restart coverage are complete; focused suite 45 passed, 0 skipped; work-unit commit pending.
-- Pending: README and full local validation, final commit(s), push, PR, hosted checks, final review.
+- C3 CoreServices/public API and restart coverage are complete; focused suite 45 passed, 0 skipped; work-unit commit `0a98095109316224f03e14f715651c69b0692dc2`.
+- README now documents the implemented foundation/catalog domain and explicitly lists missing future capabilities.
+- Full required local validation passed after behavior-preserving lint fix: tests 45/0 skipped; typecheck, lint, format, build, audit (0 vulnerabilities), diff check; `npm ci` passed before source-only cleanup.
+- Lint cleanup commit: `877e45565cd71267cdb2e08dc3e6578a89d6eee8` (`fix(catalog): simplify mapping projection`).
+- Pending: final diff audit/README commit, push, PR, hosted checks, final review.
 
 ## Next step
-Update README minimally, execute every requested final check, review the complete branch diff, then complete push/PR/hosted checks without merging.
+Review and commit the README/lint cleanup, push the feature branch, open the issue-linked PR, verify all required hosted checks and review threads, and stop before merge.

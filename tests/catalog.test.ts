@@ -12,6 +12,264 @@ import {
 } from '../src/catalog.js';
 
 import { AppError } from '../src/errors.js';
+import { openDatabase } from '../src/persistence/sqlite.js';
+import { CatalogRepository } from '../src/catalog-repository.js';
+
+const internalUuidPattern =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+describe('canonical catalog persistence', () => {
+  it('persists hierarchy with generated opaque IDs and survives a file-backed restart', async () => {
+    const { mkdtempSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const directory = mkdtempSync(join(tmpdir(), 'catalog-'));
+    const path = join(directory, 'catalog.sqlite');
+    try {
+      const db = openDatabase(path);
+      const catalog = new CatalogRepository(db);
+      const gameId = catalog.createGame({ canonicalTitle: 'Hades' });
+      const releaseId = catalog.createRelease({ gameId, title: 'Original' });
+      const editionId = catalog.createEdition({ releaseId, name: 'Standard' });
+      const productId = catalog.createProduct({
+        editionId,
+        platform: { family: 'pc', variant: 'Steam Deck' },
+        distribution: 'digital_storefront',
+      });
+      for (const id of [gameId, releaseId, editionId, productId]) {
+        expect(id).toMatch(internalUuidPattern);
+      }
+      expect(new Set([gameId, releaseId, editionId, productId]).size).toBe(4);
+      db.close();
+
+      const reopened = openDatabase(path);
+      expect(new CatalogRepository(reopened).getProduct(productId)).toEqual({
+        id: productId,
+        editionId,
+        platform: { family: 'pc', variant: 'Steam Deck' },
+        distribution: 'digital_storefront',
+      });
+      reopened.close();
+    } finally {
+      const { rmSync } = await import('node:fs');
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('lists catalog records by their parent with independent product context filters', () => {
+    const db = openDatabase(':memory:');
+    const catalog = new CatalogRepository(db);
+    const gameId = catalog.createGame({ canonicalTitle: 'Hades' });
+    const otherGameId = catalog.createGame({ canonicalTitle: 'Celeste' });
+    const releaseId = catalog.createRelease({ gameId, title: 'Original' });
+    const secondReleaseId = catalog.createRelease({ gameId, title: 'Anniversary' });
+    const unrelatedReleaseId = catalog.createRelease({ gameId: otherGameId, title: 'Original' });
+    const editionId = catalog.createEdition({ releaseId, name: 'Standard' });
+    const secondEditionId = catalog.createEdition({ releaseId, name: 'Deluxe' });
+    const unrelatedEditionId = catalog.createEdition({
+      releaseId: unrelatedReleaseId,
+      name: 'Standard',
+    });
+    const parentProductId = catalog.createProduct({
+      editionId,
+      platform: { family: 'pc', variant: 'steam-compatible' },
+      distribution: 'digital_storefront',
+    });
+    const componentProductId = catalog.createProduct({
+      editionId,
+      platform: { family: 'pc' },
+      distribution: 'digital_key',
+    });
+    const otherPlatformProductId = catalog.createProduct({
+      editionId,
+      platform: { family: 'xbox', variant: 'Series X' },
+      distribution: 'digital_storefront',
+    });
+    catalog.createProduct({
+      editionId: secondEditionId,
+      platform: { family: 'pc', variant: 'steam-compatible' },
+      distribution: 'digital_storefront',
+    });
+
+    expect(catalog.listReleasesByGame(gameId)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: releaseId, gameId, title: 'Original' }),
+        expect.objectContaining({ id: secondReleaseId, gameId, title: 'Anniversary' }),
+      ]),
+    );
+    expect(catalog.listReleasesByGame(gameId)).toHaveLength(2);
+    expect(catalog.listEditionsByRelease(releaseId)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: editionId, releaseId, name: 'Standard' }),
+        expect.objectContaining({ id: secondEditionId, releaseId, name: 'Deluxe' }),
+      ]),
+    );
+    expect(catalog.listEditionsByRelease(releaseId)).toHaveLength(2);
+    expect(catalog.listProductsByEdition(editionId)).toHaveLength(3);
+    expect(
+      catalog.listProductsByEdition(editionId, {
+        platformFamily: 'pc',
+        platformVariant: 'steam-compatible',
+        distribution: 'digital_storefront',
+      }),
+    ).toEqual([
+      expect.objectContaining({
+        id: parentProductId,
+        platform: { family: 'pc', variant: 'steam-compatible' },
+        distribution: 'digital_storefront',
+      }),
+    ]);
+    expect(catalog.listProductsByEdition(editionId, { distribution: 'digital_key' })).toEqual([
+      expect.objectContaining({
+        id: componentProductId,
+        platform: { family: 'pc' },
+        distribution: 'digital_key',
+      }),
+    ]);
+    expect(catalog.listProductsByEdition(editionId, { platformFamily: 'xbox' })).toEqual([
+      expect.objectContaining({
+        id: otherPlatformProductId,
+        platform: { family: 'xbox', variant: 'Series X' },
+      }),
+    ]);
+
+    const composition = {
+      parentProductId,
+      componentProductId,
+      quantity: 1,
+      componentType: 'base_game' as const,
+      requiredForCompleteness: true,
+    };
+    catalog.addComposition(composition);
+    expect(catalog.listComponentsForParent(parentProductId)).toEqual([composition]);
+    expect(catalog.listEditionsByRelease(secondReleaseId)).toEqual([]);
+    expect(catalog.listProductsByEdition(unrelatedEditionId)).toEqual([]);
+    db.close();
+  });
+
+  it('enforces hierarchy foreign keys, restricts deletes, and rejects invalid input', () => {
+    const db = openDatabase(':memory:');
+    const catalog = new CatalogRepository(db);
+    expect(() =>
+      catalog.createRelease({ gameId: catalogIdSchema.parse('missing'), title: 'No parent' }),
+    ).toThrow(AppError);
+    const gameId = catalog.createGame({ canonicalTitle: 'Hades' });
+    const releaseId = catalog.createRelease({ gameId, title: 'Original' });
+    const editionId = catalog.createEdition({ releaseId, name: 'Standard' });
+    const productId = catalog.createProduct({
+      editionId,
+      platform: { family: 'pc' },
+      distribution: 'digital_storefront',
+    });
+    expect(() =>
+      catalog.createEdition({ releaseId: catalogIdSchema.parse('missing'), name: 'Orphan' }),
+    ).toThrow(AppError);
+    expect(() =>
+      catalog.createProduct({
+        editionId: catalogIdSchema.parse('missing'),
+        platform: { family: 'pc' },
+        distribution: 'digital_storefront',
+      }),
+    ).toThrow(AppError);
+    expect(() => catalog.deleteGame(gameId)).toThrow(AppError);
+    expect(() => catalog.deleteRelease(releaseId)).toThrow(AppError);
+    expect(() => catalog.deleteEdition(editionId)).toThrow(AppError);
+    expect(() => catalog.deleteProduct(productId)).not.toThrow();
+    expect(() => catalog.createGame({ canonicalTitle: '   ' })).toThrow(
+      expect.objectContaining({ code: 'INPUT_INVALID' }),
+    );
+    db.close();
+  });
+
+  it('makes composition creation idempotent and rejects conflicting duplicates', () => {
+    const db = openDatabase(':memory:');
+    const catalog = new CatalogRepository(db);
+    const gameId = catalog.createGame({ canonicalTitle: 'Bundle' });
+    const releaseId = catalog.createRelease({ gameId, title: 'Base' });
+    const editionId = catalog.createEdition({ releaseId, name: 'Standard' });
+    const parentProductId = catalog.createProduct({
+      editionId,
+      platform: { family: 'pc' },
+      distribution: 'digital_storefront',
+    });
+    const componentProductId = catalog.createProduct({
+      editionId,
+      platform: { family: 'pc' },
+      distribution: 'digital_key',
+    });
+    const composition = {
+      parentProductId,
+      componentProductId,
+      quantity: 1,
+      componentType: 'base_game' as const,
+      requiredForCompleteness: true,
+    };
+    expect(catalog.addComposition(composition)).toBe('created');
+    expect(catalog.addComposition(composition)).toBe('existing');
+    expect(() => catalog.addComposition({ ...composition, quantity: 2 })).toThrow(AppError);
+    expect(() => catalog.deleteProduct(parentProductId)).toThrow(AppError);
+    expect(() => catalog.deleteProduct(componentProductId)).toThrow(AppError);
+    expect(() =>
+      catalog.addComposition({
+        ...composition,
+        componentProductId: catalogIdSchema.parse('missing'),
+      }),
+    ).toThrow(AppError);
+    expect(() =>
+      catalog.addComposition({
+        ...composition,
+        parentProductId: catalogIdSchema.parse('missing'),
+      }),
+    ).toThrow(AppError);
+    db.close();
+  });
+
+  it('roundtrips mapping states and forbids implicit ambiguous promotion', () => {
+    const db = openDatabase(':memory:');
+    const catalog = new CatalogRepository(db);
+    const gameId = catalog.createGame({ canonicalTitle: 'Game' });
+    const releaseId = catalog.createRelease({ gameId, title: 'Release' });
+    const editionId = catalog.createEdition({ releaseId, name: 'Edition' });
+    const productId = catalog.createProduct({
+      editionId,
+      platform: { family: 'xbox', variant: 'Series X' },
+      distribution: 'digital_storefront',
+    });
+    const identity = { providerId: 'store', providerProductId: 'external-42' };
+    const unmatched = catalog.upsertMapping({ ...identity, state: 'unmatched' });
+    expect(unmatched).toMatchObject({ ...identity, state: 'unmatched' });
+    expect(unmatched.id).toMatch(internalUuidPattern);
+    for (const state of ['probable', 'verified', 'ambiguous'] as const) {
+      const mapping = catalog.upsertMapping({ ...identity, state, productId });
+      expect(mapping.id).toMatch(internalUuidPattern);
+      expect(mapping).toMatchObject({ ...identity, state, productId });
+      expect(catalog.getMapping(identity)).toEqual(mapping);
+    }
+    expect(() => catalog.upsertMapping({ ...identity, state: 'verified', productId })).toThrow(
+      AppError,
+    );
+    expect(() =>
+      catalog.upsertMapping({
+        providerId: 'store',
+        providerProductId: 'absent',
+        state: 'verified',
+        productId: catalogIdSchema.parse('missing'),
+      }),
+    ).toThrow(AppError);
+    expect(() => catalog.deleteProduct(productId)).toThrow(AppError);
+    db.close();
+  });
+
+  it('does not leak SQLite details from persistence errors', () => {
+    const db = openDatabase(':memory:');
+    const catalog = new CatalogRepository(db);
+    const id = catalogIdSchema.parse('secret-sql-value');
+    db.close();
+    expect(() => catalog.getGame(id)).toThrow(
+      expect.objectContaining({ code: 'PERSISTENCE_UNAVAILABLE' }),
+    );
+  });
+});
 
 describe('canonical catalog contracts', () => {
   it('validates the Game → Release → Edition → Product hierarchy with opaque IDs', () => {
@@ -113,6 +371,8 @@ describe('canonical catalog contracts', () => {
     };
     expect(productCompositionInputSchema.parse(composition)).toEqual(composition);
     expect(() => productCompositionInputSchema.parse({ ...composition, quantity: 0 })).toThrow();
+    expect(() => productCompositionInputSchema.parse({ ...composition, quantity: -1 })).toThrow();
+    expect(() => productCompositionInputSchema.parse({ ...composition, quantity: 1.5 })).toThrow();
     expect(() =>
       productCompositionInputSchema.parse({
         ...composition,
@@ -175,5 +435,14 @@ describe('canonical catalog contracts', () => {
     expect(() =>
       providerProductMappingInputSchema.parse({ ...unmatched, state: 'ignored' }),
     ).toThrow();
+    expect(() =>
+      providerProductMappingInputSchema.parse({ ...unmatched, providerId: '   ' }),
+    ).toThrow();
+    expect(() =>
+      providerProductMappingInputSchema.parse({ ...unmatched, providerProductId: '   ' }),
+    ).toThrow();
+    for (const state of ['verified', 'probable', 'ambiguous'] as const) {
+      expect(() => providerProductMappingInputSchema.parse({ ...unmatched, state })).toThrow();
+    }
   });
 });

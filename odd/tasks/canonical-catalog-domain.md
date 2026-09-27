@@ -18,27 +18,29 @@ Foundation is complete at baseline `4a74678f327ce304fba10b1ccde5ed6a85d30e56`. B
 - No merge. Commit and push only this feature branch; create PR targeting main and await checks/review.
 - TDD: strict RED → GREEN → REFACTOR; runner: `npm test -- --run`, selected explicitly by the user.
 - Route: delegated direct implementation because multiple non-trivial files must change; parent remains responsible for scope, task reconciliation, commits, and delivery.
-- Delivery strategy: single feature PR, with coherent work-unit commits; inspect authored PR size and report if review workload becomes excessive.
+- Delivery strategy: `exception-ok`, explicitly authorized by the user on 2026-09-27 to keep the requested single PR despite exceeding the 400-line review guideline; retain coherent work-unit commits and report actual PR size.
 
 ## Scope
 Implement catalog domain types/validation, Game → Release → Edition → Product hierarchy, extensible platform family/variant and stable distribution category identifiers, ProductComposition, provider-product mapping states/identity/persistence, SQLite migration 002, small typed repositories, minimum CoreServices integration/public exports, and focused domain/migration/restart persistence tests. Minimal deterministic title normalization is optional and must remain discovery-only.
 
 ## Task checklist
 
-### C1 — Domain contracts and validation (in progress; correction)
+### C1 — Domain contracts and validation (done)
 - [x] Add typed catalog contracts and input validation for Game, Release, Edition, Product, platform/distribution, compositions, and mapping states.
 - [x] Add behavior-first tests, observe RED before implementation, then GREEN and REFACTOR.
 - [x] Fix the composition-pair delimiter collision found by independent verification using an unambiguous key and add a regression test via TDD.
-- [ ] Commit evidence: initial work-unit commit `7890df5f0984603eeef4e06ff572574dd1a191e7`; correction commit pending.
-- Evidence: regression test observed RED (1 failed, 4 passed) before implementation; focused suite then passed (5 tests, 0 skipped), typecheck passed, Prettier check passed, and parent `git diff --check` passed. Pair keys now use JSON tuple serialization.
+- [x] Commit evidence: initial contract commit `7890df5f0984603eeef4e06ff572574dd1a191e7`; correction commit `3226104e882e118a1ec9d2a440206f9a0df14d56`.
+- Evidence: regression test observed RED (1 failed, 4 passed) before implementation; focused suite passed (5 tests, 0 skipped), typecheck passed, Prettier check passed, independent verification and parent `git diff --check` passed. Pair keys use JSON tuple serialization.
 
-### C2 — Migration 002 and relational repositories
-- [ ] Add only catalog tables/indexes/constraints in migration 002; preserve migration 001 definition and checksum.
-- [ ] Implement typed repositories with canonical opaque IDs, safe errors, explicit duplicate/upsert semantics, foreign keys, and non-destructive deletes.
-- [ ] TDD repositories and FK/integrity cases; preserve migration transaction protections.
+### C2 — Migration 002 and relational repositories (done)
+- [x] Add only catalog tables/indexes/constraints in migration 002; preserve migration 001 definition and checksum.
+- [x] Implement typed repositories with canonical opaque IDs, safe errors, explicit duplicate/upsert semantics, foreign keys, and non-destructive deletes.
+- [x] TDD repositories and FK/integrity cases; preserve migration transaction protections.
 - [ ] Commit evidence: pending.
+- Evidence: migration `canonical-catalog` adds the six catalog tables and FK/query indexes. `npm test -- --run tests/catalog.test.ts tests/foundation.test.ts` passed 42 tests, 0 skipped; `npm run typecheck`, Prettier, and `git diff --check` passed. Initial RED covered absent repository/migration; a follow-up RED caught the missing list API. Independent verifier reviewed schema, tests, and safe error boundaries.
+- User explicitly authorized `exception-ok` to preserve the originally requested single feature PR and no-merge delivery.
 
-### C3 — Composition root and persistence coverage
+### C3 — Composition root and persistence coverage (in progress)
 - [ ] Expose catalog capability minimally through CoreServices and public exports without changing database ownership semantics.
 - [ ] Add graph persistence/restart, cross-platform identity, composition, and mapping roundtrip tests; include multiprocess migration startup regression.
 - [ ] Commit evidence: pending.

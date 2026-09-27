@@ -25,6 +25,59 @@ const defaultMigrations: readonly Migration[] = [
       updated_at TEXT NOT NULL
     ) STRICT;`,
   },
+  {
+    version: 2,
+    name: 'canonical-catalog',
+    sql: `CREATE TABLE games (
+      id TEXT PRIMARY KEY NOT NULL,
+      canonical_title TEXT NOT NULL CHECK (length(trim(canonical_title)) > 0)
+    ) STRICT;
+
+    CREATE TABLE releases (
+      id TEXT PRIMARY KEY NOT NULL,
+      game_id TEXT NOT NULL REFERENCES games(id) ON DELETE RESTRICT,
+      title TEXT NOT NULL CHECK (length(trim(title)) > 0)
+    ) STRICT;
+    CREATE INDEX releases_game_id_idx ON releases(game_id);
+
+    CREATE TABLE editions (
+      id TEXT PRIMARY KEY NOT NULL,
+      release_id TEXT NOT NULL REFERENCES releases(id) ON DELETE RESTRICT,
+      name TEXT NOT NULL CHECK (length(trim(name)) > 0)
+    ) STRICT;
+    CREATE INDEX editions_release_id_idx ON editions(release_id);
+
+    CREATE TABLE products (
+      id TEXT PRIMARY KEY NOT NULL,
+      edition_id TEXT NOT NULL REFERENCES editions(id) ON DELETE RESTRICT,
+      platform_family TEXT NOT NULL CHECK (platform_family IN ('pc', 'playstation', 'xbox', 'nintendo')),
+      platform_variant TEXT,
+      distribution TEXT NOT NULL CHECK (distribution IN ('digital_storefront', 'digital_key', 'physical_new', 'physical_used', 'subscription_access'))
+    ) STRICT;
+    CREATE INDEX products_edition_id_idx ON products(edition_id);
+
+    CREATE TABLE product_compositions (
+      parent_product_id TEXT NOT NULL REFERENCES products(id) ON DELETE RESTRICT,
+      component_product_id TEXT NOT NULL REFERENCES products(id) ON DELETE RESTRICT,
+      quantity INTEGER NOT NULL CHECK (quantity > 0),
+      component_type TEXT NOT NULL CHECK (component_type IN ('base_game', 'dlc', 'add_on', 'soundtrack', 'virtual_currency', 'other')),
+      required_for_completeness INTEGER NOT NULL CHECK (required_for_completeness IN (0, 1)),
+      PRIMARY KEY (parent_product_id, component_product_id),
+      CHECK (parent_product_id <> component_product_id)
+    ) STRICT;
+    CREATE INDEX product_compositions_component_product_id_idx ON product_compositions(component_product_id);
+
+    CREATE TABLE provider_product_mappings (
+      id TEXT PRIMARY KEY NOT NULL,
+      provider_id TEXT NOT NULL CHECK (length(trim(provider_id)) > 0),
+      provider_product_id TEXT NOT NULL CHECK (length(trim(provider_product_id)) > 0),
+      product_id TEXT REFERENCES products(id) ON DELETE RESTRICT,
+      state TEXT NOT NULL CHECK (state IN ('verified', 'probable', 'ambiguous', 'unmatched')),
+      UNIQUE (provider_id, provider_product_id),
+      CHECK ((state = 'unmatched' AND product_id IS NULL) OR (state <> 'unmatched' AND product_id IS NOT NULL))
+    ) STRICT;
+    CREATE INDEX provider_product_mappings_product_id_idx ON provider_product_mappings(product_id);`,
+  },
 ];
 
 export function openDatabase(path: string, options: OpenDatabaseOptions = {}): Database.Database {

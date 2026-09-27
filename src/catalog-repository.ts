@@ -332,7 +332,11 @@ export class CatalogRepository {
         )
         .get(mapping.providerId, mapping.providerProductId) as
         { id: string; state: string } | undefined;
-      if (previous?.state === 'ambiguous' && mapping.state !== 'ambiguous') {
+      if (
+        previous?.state === 'ambiguous' &&
+        mapping.state !== 'ambiguous' &&
+        mapping.state !== 'unmatched'
+      ) {
         throw new AppError('INPUT_INVALID', 'Catalog input is invalid');
       }
       const id = previous?.id ?? newId();

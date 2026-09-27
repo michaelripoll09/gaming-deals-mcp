@@ -337,6 +337,35 @@ describe('canonical catalog persistence', () => {
     db.close();
   });
 
+  it('clears an ambiguous mapping to unmatched without changing its identity', () => {
+    const db = openDatabase(':memory:');
+    const catalog = new CatalogRepository(db);
+    const gameId = catalog.createGame({ canonicalTitle: 'Game' });
+    const releaseId = catalog.createRelease({ gameId, title: 'Release' });
+    const editionId = catalog.createEdition({ releaseId, name: 'Edition' });
+    const productId = catalog.createProduct({
+      editionId,
+      platform: { family: 'pc' },
+      distribution: 'digital_storefront',
+    });
+    const identity = { providerId: 'store', providerProductId: 'external-ambiguous' };
+    const ambiguous = catalog.upsertMapping({ ...identity, state: 'ambiguous', productId });
+
+    expect(() => catalog.upsertMapping({ ...identity, state: 'probable', productId })).toThrow(
+      AppError,
+    );
+    expect(() => catalog.upsertMapping({ ...identity, state: 'verified', productId })).toThrow(
+      AppError,
+    );
+    const unmatched = catalog.upsertMapping({ ...identity, state: 'unmatched' });
+
+    expect(unmatched).toEqual({ ...identity, state: 'unmatched', id: ambiguous.id });
+    expect(unmatched.id).toBe(ambiguous.id);
+    expect(unmatched.productId).toBeUndefined();
+    expect(catalog.getMapping(identity)).toEqual(unmatched);
+    db.close();
+  });
+
   it('does not leak SQLite details from persistence errors', () => {
     const db = openDatabase(':memory:');
     const catalog = new CatalogRepository(db);

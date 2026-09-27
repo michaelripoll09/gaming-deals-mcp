@@ -5,7 +5,7 @@ import { openDatabase } from './persistence/sqlite.js';
 import { SettingsStore } from './settings.js';
 
 export interface Clock {
-  now(): string;
+  now(): number;
 }
 
 export interface CoreServices {
@@ -22,7 +22,7 @@ export interface CoreServicesOptions {
 }
 
 export function createCoreServices(options: CoreServicesOptions = {}): CoreServices {
-  const clock = options.clock ?? { now: () => new Date().toISOString() };
+  const clock = options.clock ?? { now: () => Date.now() };
   const env = options.env ?? process.env;
   const bootstrapConfig = loadConfig(env);
   const ownsDatabase = options.database === undefined;

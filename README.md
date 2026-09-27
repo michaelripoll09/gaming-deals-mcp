@@ -25,6 +25,8 @@ npm audit --audit-level moderate
 
 The public package entry point exports validated runtime configuration, safe application errors, UTC clock services, integer-minor-unit money, SQLite database initialization and migration support, and a closed typed settings store.
 
-The SQLite connection enables foreign keys, WAL, a bounded busy timeout, and `synchronous = NORMAL`. Schema migrations are ordered, exclusive, transactional, and SHA-256 checksummed. Secrets are supplied through the process environment and are deliberately non-enumerable on runtime configuration objects.
+The SQLite connection enables foreign keys, sets a bounded busy timeout before WAL mode, and uses `synchronous = NORMAL`. Schema migrations are ordered, exclusive, transactional, and SHA-256 checksummed. Migration 001 creates `app_settings` with `key`, JSON-encoded `value_json`, and UTC ISO `updated_at` columns. Settings are parsed and validated against their known types on both reads and writes; unknown keys and corrupt stored values fail safely.
+
+The canonical preference key is `timezone` (an IANA time zone). The clock returns a numeric Unix timestamp; timestamps are converted to UTC ISO-8601 only when persisted. Secrets, when later required by a provider, must come from environment variables or a local `.env` file and must never be persisted in settings or exposed to the frontend. This Foundation has no provider-specific credentials.
 
 This is not yet an MCP server, working CLI, dashboard, catalog, offer provider, scheduler, or game-deal product. Those capabilities belong to later implementation blocks.

@@ -1,18 +1,18 @@
+import { resolve } from 'node:path';
 import { z } from 'zod';
 import { AppError } from './errors.js';
 
 const preferenceSchema = z.object({
   country: z.string().regex(/^[A-Z]{2}$/),
   currency: z.string().regex(/^[A-Z]{3}$/),
-  timeZone: z.string().min(1),
+  timezone: z.string().min(1),
 });
 
 export interface AppConfig {
   readonly databasePath: string;
   readonly country: string;
   readonly currency: string;
-  readonly timeZone: string;
-  readonly secrets: Readonly<{ itadApiKey?: string }>;
+  readonly timezone: string;
 }
 
 export type ConfigOverrides = Partial<z.infer<typeof preferenceSchema>>;
@@ -25,27 +25,23 @@ export function loadConfig(
   const merged = {
     country: 'US',
     currency: 'USD',
-    timeZone: 'UTC',
+    timezone: 'UTC',
     ...persisted,
     ...overrides,
   };
   const parsed = preferenceSchema.safeParse(merged);
   if (
     !parsed.success ||
-    !isTimeZone(parsed.data.timeZone) ||
+    !isTimeZone(parsed.data.timezone) ||
     !Intl.supportedValuesOf('currency').includes(parsed.data.currency)
   ) {
     throw new AppError('CONFIG_INVALID', 'Configuration is invalid');
   }
+  const databasePath = env['DATABASE_PATH'] ?? '.gaming-deals/gaming-deals.sqlite';
   const config = {
     ...parsed.data,
-    databasePath: env['DATABASE_PATH'] ?? '.gaming-deals/gaming-deals.sqlite',
+    databasePath: databasePath === ':memory:' ? databasePath : resolve(databasePath),
   } as AppConfig;
-  Object.defineProperty(config, 'secrets', {
-    value: env['ITAD_API_KEY'] === undefined ? {} : { itadApiKey: env['ITAD_API_KEY'] },
-    enumerable: false,
-    writable: false,
-  });
   return Object.freeze(config);
 }
 

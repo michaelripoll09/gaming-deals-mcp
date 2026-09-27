@@ -21,7 +21,7 @@ const defaultMigrations: readonly Migration[] = [
     name: 'typed-settings',
     sql: `CREATE TABLE app_settings (
       key TEXT PRIMARY KEY,
-      value TEXT NOT NULL,
+      value_json TEXT NOT NULL,
       updated_at TEXT NOT NULL
     ) STRICT;`,
   },
@@ -34,8 +34,8 @@ export function openDatabase(path: string, options: OpenDatabaseOptions = {}): D
     db = new Database(path);
     const busyTimeoutMs = validBusyTimeout(options.busyTimeoutMs ?? 5000);
     db.pragma('foreign_keys = ON');
-    db.pragma('journal_mode = WAL');
     db.pragma(`busy_timeout = ${busyTimeoutMs}`);
+    setWalJournalMode(db, busyTimeoutMs);
     db.pragma('synchronous = NORMAL');
     const foreignKeys = db.pragma('foreign_keys', { simple: true });
     const journalMode = db.pragma('journal_mode', { simple: true });
@@ -65,6 +65,26 @@ export function openDatabase(path: string, options: OpenDatabaseOptions = {}): D
     if (cause instanceof AppError) throw cause;
     throw new AppError('PERSISTENCE_UNAVAILABLE', 'Database initialization failed', { cause });
   }
+}
+
+function setWalJournalMode(db: Database.Database, busyTimeoutMs: number): void {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      db.pragma('journal_mode = WAL');
+      return;
+    } catch (error) {
+      if (attempt > 0 || !isSqliteBusy(error)) throw error;
+      // The pragma's configured busy timeout is honored on each attempt; this
+      // short fixed pause lets a competing process finish its startup transition.
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.min(25, busyTimeoutMs));
+    }
+  }
+}
+
+function isSqliteBusy(error: unknown): boolean {
+  return (
+    typeof error === 'object' && error !== null && 'code' in error && error.code === 'SQLITE_BUSY'
+  );
 }
 
 function validBusyTimeout(value: number): number {

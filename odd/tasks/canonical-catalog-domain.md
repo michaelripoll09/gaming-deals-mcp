@@ -49,7 +49,9 @@ Implement catalog domain types/validation, Game → Release → Edition → Prod
 ### C4 — Documentation and release validation (in progress)
 - [x] Update README minimally and honestly to describe Foundation + canonical catalog and later capabilities still absent.
 - [x] Run requested local validation: `npm ci`, full tests (45 passed, 0 skipped), typecheck, lint, format check, build, moderate audit (0 vulnerabilities), and `git diff --check` all pass. Initial lint run found an unused mapping projection alias; a behavior-preserving fix was made and all checks were rerun.
-- [ ] Review entire branch diff for scope/security/integrity issues, commit final work unit, push, create PR with approved labels and issue linkage.
+- [x] Review complete branch diff: only README, ODD task record, catalog domain/repository/services, SQLite migration 002, and focused catalog/Foundation tests changed. Diff confirms migration 001 is unchanged; no CI, ruleset, dependencies, provider/network, offers/pricing, wishlist/ownership, MCP/CLI/dashboard/scheduler, or unrelated files changed. Single-PR exception remains authorized.
+- [x] C4 implementation commits: `877e45565cd71267cdb2e08dc3e6578a89d6eee8` (`fix(catalog): simplify mapping projection`) and `004e9d5568168cdc9e0ad4dc4a4dabb3f2558699` (`docs(catalog): document implemented catalog scope`).
+- [ ] Complete native review of C3 and C4 work-unit candidates, push feature branch, and create issue-linked PR with approved labels.
 - [ ] Wait for all named hosted checks, inspect automated review comments/threads, address confirmed defects via TDD, and stop before merge.
 - [ ] Commit/PR evidence: pending.
 
@@ -80,7 +82,9 @@ Implement catalog domain types/validation, Game → Release → Edition → Prod
 - README now documents the implemented foundation/catalog domain and explicitly lists missing future capabilities.
 - Full required local validation passed after behavior-preserving lint fix: tests 45/0 skipped; typecheck, lint, format, build, audit (0 vulnerabilities), diff check; `npm ci` passed before source-only cleanup.
 - Lint cleanup commit: `877e45565cd71267cdb2e08dc3e6578a89d6eee8` (`fix(catalog): simplify mapping projection`).
-- Pending: final diff audit/README commit, push, PR, hosted checks, final review.
+- Full branch diff audit passed: only the nine intended README/task/domain/service/persistence/test files changed; migration 001 unchanged and migration 002 is additive.
+- C4 commits: lint cleanup `877e45565cd71267cdb2e08dc3e6578a89d6eee8`; README `004e9d5568168cdc9e0ad4dc4a4dabb3f2558699`. Full required local validation passed (45 tests, 0 skipped; typecheck, lint, format, build, audit 0 vulnerabilities, diff-check; npm ci passed before source-only cleanup).
+- Pending: native review for C3/C4 slices, push, issue-linked PR, hosted checks, final review.
 
 ## Next step
-Review and commit the README/lint cleanup, push the feature branch, open the issue-linked PR, verify all required hosted checks and review threads, and stop before merge.
+Complete native review for the C3 and C4 work-unit slices, push the feature branch, open the issue-linked PR, verify required hosted checks and review threads, and stop before merge.

@@ -126,6 +126,20 @@ describe('canonical catalog contracts', () => {
       }),
     ).toThrow();
     expect(() => productCompositionsInputSchema.parse([composition, composition])).toThrow();
+    expect(
+      productCompositionsInputSchema.parse([
+        {
+          ...composition,
+          parentProductId: 'a\u0000b',
+          componentProductId: 'c',
+        },
+        {
+          ...composition,
+          parentProductId: 'a',
+          componentProductId: 'b\u0000c',
+        },
+      ]),
+    ).toHaveLength(2);
   });
 
   it('validates mapping states without conflating external and canonical identity', () => {

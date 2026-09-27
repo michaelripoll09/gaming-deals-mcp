@@ -21,17 +21,18 @@ Foundation is complete at baseline `4a74678f327ce304fba10b1ccde5ed6a85d30e56`. B
 - Delivery strategy: single feature PR, with coherent work-unit commits; inspect authored PR size and report if review workload becomes excessive.
 
 ## Scope
-Implement catalog domain types/validation, Game → Release → Edition → Product hierarchy, extensible platform family/variant and stable distribution identifiers, ProductComposition, provider-product mapping states/identity/persistence, SQLite migration 002, small typed repositories, minimum CoreServices integration/public exports, and focused domain/migration/restart persistence tests. Minimal deterministic title normalization is optional and must remain discovery-only.
+Implement catalog domain types/validation, Game → Release → Edition → Product hierarchy, extensible platform family/variant and stable distribution category identifiers, ProductComposition, provider-product mapping states/identity/persistence, SQLite migration 002, small typed repositories, minimum CoreServices integration/public exports, and focused domain/migration/restart persistence tests. Minimal deterministic title normalization is optional and must remain discovery-only.
 
 ## Task checklist
 
-### C1 — Domain contracts and validation (done)
+### C1 — Domain contracts and validation (in progress; correction)
 - [x] Add typed catalog contracts and input validation for Game, Release, Edition, Product, platform/distribution, compositions, and mapping states.
 - [x] Add behavior-first tests, observe RED before implementation, then GREEN and REFACTOR.
-- [ ] Commit evidence: pending.
-- Evidence: `npm test -- --run tests/catalog.test.ts` — 5 passed, 0 skipped; `npm run typecheck` passed; Prettier check passed. RED was observed on the missing/rejected domain contracts before implementation and again for the follow-up field/error behavior; GREEN and refactor runs passed. Parent spot-check test and `git diff --check` passed.
+- [x] Fix the composition-pair delimiter collision found by independent verification using an unambiguous key and add a regression test via TDD.
+- [ ] Commit evidence: initial work-unit commit `7890df5f0984603eeef4e06ff572574dd1a191e7`; correction commit pending.
+- Evidence: regression test observed RED (1 failed, 4 passed) before implementation; focused suite then passed (5 tests, 0 skipped), typecheck passed, Prettier check passed, and parent `git diff --check` passed. Pair keys now use JSON tuple serialization.
 
-### C2 — Migration 002 and relational repositories (in progress)
+### C2 — Migration 002 and relational repositories
 - [ ] Add only catalog tables/indexes/constraints in migration 002; preserve migration 001 definition and checksum.
 - [ ] Implement typed repositories with canonical opaque IDs, safe errors, explicit duplicate/upsert semantics, foreign keys, and non-destructive deletes.
 - [ ] TDD repositories and FK/integrity cases; preserve migration transaction protections.
@@ -68,8 +69,8 @@ Implement catalog domain types/validation, Game → Release → Edition → Prod
 - Issue #13 created with only existing labels `status:approved` and `type:feature`.
 - Feature branch created at the expected baseline SHA.
 - Approved architecture sections reread; migration 001 is checksum protected and must remain unchanged.
-- C1 domain contracts completed with behavior-first tests and safe input validation; C1 work-unit commit pending.
-- Pending: C2-C4 implementation, full validation, commit(s), push, PR, hosted checks, review.
+- C1 initial work-unit commit: `7890df5f0984603eeef4e06ff572574dd1a191e7`; independent verification passed tests/typecheck/diff check but identified a delimiter collision in composition duplicate detection, so C1 is reopened for a TDD correction.
+- Pending: C1 correction commit; C2-C4 implementation; full validation, push, PR, hosted checks, review.
 
 ## Next step
-Commit the completed C1 work unit, assess the candidate under the active RDD policy, then implement C2 through one bounded writer.
+Correct the verified composition duplicate-key collision under strict TDD, commit and assess the correction, then begin C2 through one bounded writer.

@@ -105,7 +105,7 @@ export const productCompositionsInputSchema = z
   .superRefine((compositions, context) => {
     const seen = new Set<string>();
     compositions.forEach((composition, index) => {
-      const pair = `${composition.parentProductId}\u0000${composition.componentProductId}`;
+      const pair = JSON.stringify([composition.parentProductId, composition.componentProductId]);
       if (seen.has(pair)) {
         context.addIssue({
           code: 'custom',

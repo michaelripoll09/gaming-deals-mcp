@@ -52,9 +52,11 @@ Implement catalog domain types/validation, Game → Release → Edition → Prod
 - [x] Review complete branch diff: only README, ODD task record, catalog domain/repository/services, SQLite migration 002, and focused catalog/Foundation tests changed. Diff confirms migration 001 is unchanged; no CI, ruleset, dependencies, provider/network, offers/pricing, wishlist/ownership, MCP/CLI/dashboard/scheduler, or unrelated files changed. Single-PR exception remains authorized.
 - [x] C4 implementation commits: `877e45565cd71267cdb2e08dc3e6578a89d6eee8` (`fix(catalog): simplify mapping projection`) and `004e9d5568168cdc9e0ad4dc4a4dabb3f2558699` (`docs(catalog): document implemented catalog scope`).
 - [x] Push feature branch and create issue-linked PR #14 to `main` with the single approved type label `type:feature`; PR links approved issue #13.
-- [x] Hosted checks were green at pre-remediation head `c7e3d75b9612a97270264920ad5e2e14c6bbbdba`; PR #14 remains open and unmerged.
+- [x] Hosted checks are all green at remediation head `ea2d3f0e3f8bb2e0e1a6d458b27b70b04bfb3454`; PR #14 remains open and unmerged, based on `main`, label `type:feature`.
+- [x] Replied to both actionable P2 comments with TDD/commit evidence and resolved both review threads.
 - [x] Re-run all local checks after C5/C6 fixes at `4a405e76c32f2327e9cbf64ff64b68b8459a8b85`: `npm ci`, full tests (47 passed; no skip count emitted), typecheck, lint, format check, build, moderate audit (0 vulnerabilities), and diff-check passed. `npm ci` emitted an install-script allowlist warning for `better-sqlite3` but completed; package manifests/lockfile remained unchanged.
-- [ ] Push the updated branch, verify all hosted checks on the new PR head, and resolve/reply to the two P2 review threads.
+- [x] Push C5/C6 fixes and verify all hosted checks on the updated PR head. Hosted checks: lint, build, CodeQL, dependency audit/review, format, Node compatibility 22.22.2/24.15.0/26.0.0, tests, typecheck all passed.
+- [ ] Record final evidence and obtain a native review verdict if the blocked harness lineage can be repaired; otherwise report the limitation, preserve PR open/unmerged, and withhold readiness verdict.
 - [ ] Native full-PR review remains blocked at lineage `review-10ad41b8103663df` (`reviewing`/`collect`): grouped and single-slot captures returned unknown/expired/different session route with `mutation_performed: false`; no native reviewer ran or produced a verdict. Do not replay/restart; preserve for manual harness follow-up.
 - GitHub Codex review at `7fb817a` reported two actionable P2 findings tracked in C5 and C6 below.
 
@@ -101,11 +103,11 @@ Implement catalog domain types/validation, Game → Release → Edition → Prod
 - C4 commits: lint cleanup `877e45565cd71267cdb2e08dc3e6578a89d6eee8`; README `004e9d5568168cdc9e0ad4dc4a4dabb3f2558699`. Full local validation passed at pre-remediation code head (45 tests, 0 skipped; typecheck, lint, format, build, audit 0 vulnerabilities, diff-check; npm ci passed).
 - C5 commit `385bed8e88b94891131bc8896ebdd729c11783c3` allows explicit ambiguous→unmatched clearing, preserving mapping ID and clearing product ID; direct ambiguous→probable/verified remains rejected.
 - C6 commit `ffd46d7127c6934bec5da9c1a538a972ea779526` adds an atomic conflict predicate and affected-row check; deterministic interleaving regression proves concurrent ambiguous state cannot be overwritten. Formatting-only follow-up is `4a405e76c32f2327e9cbf64ff64b68b8459a8b85`.
-- Current local branch HEAD `4a405e76c32f2327e9cbf64ff64b68b8459a8b85` passed final local validation: tests 47, typecheck, lint, format, build, audit 0 vulnerabilities, diff-check; `npm ci` passed with a better-sqlite3 install-script allowlist warning and did not change manifests/lockfile.
-- PR #14 remains open/unmerged at pre-remediation hosted-verified head `c7e3d75b9612a97270264920ad5e2e14c6bbbdba`, based on `main`, with exactly `type:feature`; issue #13 remains OPEN and `status:approved`.
-- PR #14 has all hosted checks green at `c7e3d75b9612a97270264920ad5e2e14c6bbbdba`, but its GitHub Codex review found two P2 mapping defects: ambiguous mappings cannot be cleared to unmatched, and a concurrent write can bypass the ambiguous-state guard. Tracked for C5/C6.
+- Final local validation passed at implementation head `4a405e76c32f2327e9cbf64ff64b68b8459a8b85`: 47 tests, typecheck, lint, format, build, audit 0 vulnerabilities, diff-check; `npm ci` passed with a better-sqlite3 install-script allowlist warning and did not change manifests/lockfile.
+- PR #14 is open/unmerged at verified head `ea2d3f0e3f8bb2e0e1a6d458b27b70b04bfb3454`, based on `main`, with exactly `type:feature`; issue #13 remains OPEN and `status:approved`.
+- All hosted checks passed at `ea2d3f0e3f8bb2e0e1a6d458b27b70b04bfb3454`: build, lint, format, typecheck, tests, dependency audit/review, CodeQL, and Node 22.22.2/24.15.0/26.0.0. Both actionable Codex P2 comments were replied to with commit/test evidence and their threads resolved.
 - Native full-PR-slice review is unresolved at lineage `review-10ad41b8103663df`; exact capture bindings repeatedly failed as unknown/expired/different session route, with no reviewer run. Preserve the lineage and do not retry/restart.
-- Pending: commit this final validation record, push the C5/C6 branch to PR #14, await all new hosted checks, reply/resolve both GitHub review threads, obtain native review closure if harness is repaired, and keep PR open/unmerged.
+- Pending: commit this final task-record update; resolve the native harness blocker or report it as unassessable, keep PR #14 open/unmerged, and withhold readiness verdict until the review requirement is resolved.
 
 ## Next step
-Commit this validation evidence, push the updated branch, await hosted checks and reply/resolve the two P2 threads. Preserve the blocked native lineage without replay/restart; keep PR #14 open/unmerged.
+Commit the final task record and seek manual harness support for lineage `review-10ad41b8103663df`; do not replay/restart its capture. Keep PR #14 open/unmerged.

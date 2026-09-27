@@ -386,7 +386,12 @@ describe('canonical catalog persistence', () => {
                           .prepare(
                             'UPDATE provider_product_mappings SET state = ?, product_id = ? WHERE provider_id = ? AND provider_product_id = ?',
                           )
-                          .run('ambiguous', productId, identity.providerId, identity.providerProductId);
+                          .run(
+                            'ambiguous',
+                            productId,
+                            identity.providerId,
+                            identity.providerProductId,
+                          );
                       }
                       return row;
                     };
@@ -408,7 +413,6 @@ describe('canonical catalog persistence', () => {
       ).toThrow(expect.objectContaining({ code: 'INPUT_INVALID' }));
       expect(interleaved).toBe(true);
       expect(setup.getMapping(identity)).toMatchObject({ ...identity, state: 'ambiguous' });
-
     } finally {
       secondDb?.close();
       firstDb?.close();

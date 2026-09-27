@@ -373,16 +373,14 @@ export class CatalogRepository {
       )
       .get(identity.providerId, identity.providerProductId) as MappingRow | undefined;
     if (!row) throw persistenceError();
-    const record = {
-      id: row.id,
+    const mapping = validateCatalogInput(providerProductMappingInputSchema, {
       providerId: row.provider_id,
       providerProductId: row.provider_product_id,
       state: row.state,
       ...(row.product_id === null ? {} : { productId: row.product_id }),
-    };
-    const { id: _id, ...mapping } = record;
+    });
     return {
-      ...validateCatalogInput(providerProductMappingInputSchema, mapping),
+      ...mapping,
       id: catalogIdSchema.parse(row.id),
     } as ProviderProductMapping;
   }

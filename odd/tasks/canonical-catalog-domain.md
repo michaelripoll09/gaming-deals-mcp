@@ -36,16 +36,17 @@ Implement catalog domain types/validation, Game → Release → Edition → Prod
 - [x] Add only catalog tables/indexes/constraints in migration 002; preserve migration 001 definition and checksum.
 - [x] Implement typed repositories with canonical opaque IDs, safe errors, explicit duplicate/upsert semantics, foreign keys, and non-destructive deletes.
 - [x] TDD repositories and FK/integrity cases; preserve migration transaction protections.
-- [ ] Commit evidence: pending.
+- [x] Commit evidence: `c52fcf6bafad79c2674dc5a22940f157ed7f7340` (`feat(catalog): persist canonical catalog mappings`).
 - Evidence: migration `canonical-catalog` adds the six catalog tables and FK/query indexes. `npm test -- --run tests/catalog.test.ts tests/foundation.test.ts` passed 42 tests, 0 skipped; `npm run typecheck`, Prettier, and `git diff --check` passed. Initial RED covered absent repository/migration; a follow-up RED caught the missing list API. Independent verifier reviewed schema, tests, and safe error boundaries.
 - User explicitly authorized `exception-ok` to preserve the originally requested single feature PR and no-merge delivery.
 
-### C3 — Composition root and persistence coverage (in progress)
-- [ ] Expose catalog capability minimally through CoreServices and public exports without changing database ownership semantics.
-- [ ] Add graph persistence/restart, cross-platform identity, composition, and mapping roundtrip tests; include multiprocess migration startup regression.
+### C3 — Composition root and persistence coverage (done)
+- [x] Expose catalog capability minimally through CoreServices and public exports without changing database ownership semantics.
+- [x] Add graph persistence/restart, cross-platform identity, composition, and mapping roundtrip tests; include multiprocess migration startup regression.
 - [ ] Commit evidence: pending.
+- Evidence: strict TDD RED observed (focused suite: 4 failed, 41 passed) before CoreServices integration; GREEN/refactor focused suite passed 45 tests, 0 skipped. Typecheck, Prettier, `git diff --check`, and independent verification passed. Restart reconstructs Game→Release→Edition and distinct PC/PlayStation products, composition, and mapping.
 
-### C4 — Documentation and release validation
+### C4 — Documentation and release validation (in progress)
 - [ ] Update README minimally and honestly to describe Foundation + canonical catalog and later capabilities still absent.
 - [ ] Run requested local validation, review entire diff for scope/security/integrity issues, commit final work unit, push, create PR with approved labels and issue linkage.
 - [ ] Wait for all named hosted checks, inspect automated review comments/threads, address confirmed defects via TDD, and stop before merge.
@@ -71,8 +72,11 @@ Implement catalog domain types/validation, Game → Release → Edition → Prod
 - Issue #13 created with only existing labels `status:approved` and `type:feature`.
 - Feature branch created at the expected baseline SHA.
 - Approved architecture sections reread; migration 001 is checksum protected and must remain unchanged.
-- C1 initial work-unit commit: `7890df5f0984603eeef4e06ff572574dd1a191e7`; independent verification passed tests/typecheck/diff check but identified a delimiter collision in composition duplicate detection, so C1 is reopened for a TDD correction.
-- Pending: C1 correction commit; C2-C4 implementation; full validation, push, PR, hosted checks, review.
+- C1 initial commit `7890df5f0984603eeef4e06ff572574dd1a191e7`; correction commit `3226104e882e118a1ec9d2a440206f9a0df14d56`. The first independent review found the NUL delimiter collision; regression fixed with strict TDD and independently verified.
+- C2 migration/repository commit: `c52fcf6bafad79c2674dc5a22940f157ed7f7340`; focused migration/catalog suite and typecheck/format checks green.
+- C2 native review approved and acknowledged; it returned one explicitly non-blocking advisory warning `R3-001` at `src/catalog-repository.ts:244`, retained as a later informational follow-up.
+- C3 CoreServices/public API and restart coverage are complete; focused suite 45 passed, 0 skipped; work-unit commit pending.
+- Pending: README and full local validation, final commit(s), push, PR, hosted checks, final review.
 
 ## Next step
-Correct the verified composition duplicate-key collision under strict TDD, commit and assess the correction, then begin C2 through one bounded writer.
+Update README minimally, execute every requested final check, review the complete branch diff, then complete push/PR/hosted checks without merging.

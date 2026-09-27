@@ -76,7 +76,10 @@ interface MappingRow {
 
 /** Small persistence boundary for canonical catalog identities and relationships. */
 export class CatalogRepository {
-  public constructor(private readonly db: Database.Database) {}
+  public constructor(
+    private readonly db: Database.Database,
+    private readonly isClosed: () => boolean = () => false,
+  ) {}
 
   public createGame(input: NewGame): CatalogId {
     const id = newId();
@@ -393,6 +396,7 @@ export class CatalogRepository {
 
   private read<T>(operation: () => T): T {
     try {
+      this.assertOpen();
       return operation();
     } catch (cause) {
       throw safePersistenceError(cause);
@@ -401,9 +405,16 @@ export class CatalogRepository {
 
   private persist<T>(operation: () => T): T {
     try {
+      this.assertOpen();
       return operation();
     } catch (cause) {
       throw safePersistenceError(cause);
+    }
+  }
+
+  private assertOpen(): void {
+    if (this.isClosed()) {
+      throw new AppError('PERSISTENCE_UNAVAILABLE', 'Core services are closed');
     }
   }
 }

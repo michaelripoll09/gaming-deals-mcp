@@ -465,12 +465,26 @@ describe('SQLite foundation', () => {
 });
 
 describe('Core services lifecycle', () => {
-  it('does not close injected databases during normal shutdown', async () => {
+  it('does not close injected databases but disables catalog access after service shutdown', async () => {
     const db = openDatabase(':memory:');
     const services = createCoreServices({ database: db });
     await services.close();
+    await services.close();
     expect(db.prepare('SELECT 1 AS alive').get()).toEqual({ alive: 1 });
+    expect(() => services.catalog.createGame({ canonicalTitle: 'After close' })).toThrow(
+      expect.objectContaining({ code: 'PERSISTENCE_UNAVAILABLE' }),
+    );
     db.close();
+  });
+
+  it('closes owned databases and disables catalog access idempotently', async () => {
+    const services = createCoreServices({ env: { DATABASE_PATH: temporaryDatabase() } });
+    services.catalog.createGame({ canonicalTitle: 'Before close' });
+    await services.close();
+    await services.close();
+    expect(() => services.catalog.createGame({ canonicalTitle: 'After close' })).toThrow(
+      expect.objectContaining({ code: 'PERSISTENCE_UNAVAILABLE' }),
+    );
   });
 
   it('rejects non-finite, unsafe, and out-of-range clock timestamps', () => {

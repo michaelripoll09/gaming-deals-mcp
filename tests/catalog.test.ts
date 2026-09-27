@@ -14,11 +14,20 @@ import {
 import { AppError } from '../src/errors.js';
 import { openDatabase } from '../src/persistence/sqlite.js';
 import { CatalogRepository } from '../src/catalog-repository.js';
+import { createCoreServices } from '../src/core-services.js';
 
 const internalUuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 describe('canonical catalog persistence', () => {
+  it('exposes CatalogRepository through CoreServices', async () => {
+    const services = createCoreServices({ database: openDatabase(':memory:') });
+    expect(services.catalog).toBeInstanceOf(CatalogRepository);
+    const gameId = services.catalog.createGame({ canonicalTitle: 'Hades' });
+    expect(services.catalog.getGame(gameId)).toEqual({ id: gameId, canonicalTitle: 'Hades' });
+    await services.close();
+  });
+
   it('persists hierarchy with generated opaque IDs and survives a file-backed restart', async () => {
     const { mkdtempSync } = await import('node:fs');
     const { tmpdir } = await import('node:os');
@@ -52,6 +61,74 @@ describe('canonical catalog persistence', () => {
       reopened.close();
     } finally {
       const { rmSync } = await import('node:fs');
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('reconstructs the catalog graph and preserves composition and canonical mapping after restart', async () => {
+    const { mkdtempSync, rmSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const directory = mkdtempSync(join(tmpdir(), 'catalog-services-'));
+    const path = join(directory, 'catalog.sqlite');
+    try {
+      const first = createCoreServices({ env: { DATABASE_PATH: path } });
+      const gameId = first.catalog.createGame({ canonicalTitle: 'Hades II' });
+      const releaseId = first.catalog.createRelease({ gameId, title: 'Early Access' });
+      const editionId = first.catalog.createEdition({ releaseId, name: 'Deluxe' });
+      const pcProductId = first.catalog.createProduct({
+        editionId,
+        platform: { family: 'pc', variant: 'steam-compatible' },
+        distribution: 'digital_storefront',
+      });
+      const ps5ProductId = first.catalog.createProduct({
+        editionId,
+        platform: { family: 'playstation', variant: 'PS5' },
+        distribution: 'physical_new',
+      });
+      const composition = {
+        parentProductId: ps5ProductId,
+        componentProductId: pcProductId,
+        quantity: 1,
+        componentType: 'base_game' as const,
+        requiredForCompleteness: true,
+      };
+      first.catalog.addComposition(composition);
+      const identity = { providerId: 'store', providerProductId: 'ps5-edition' };
+      const mapping = first.catalog.upsertMapping({
+        ...identity,
+        state: 'verified',
+        productId: ps5ProductId,
+      });
+      await first.close();
+
+      const restarted = createCoreServices({ env: { DATABASE_PATH: path } });
+      const catalog = restarted.catalog;
+      expect(catalog.getGame(gameId)).toEqual({ id: gameId, canonicalTitle: 'Hades II' });
+      const releases = catalog.listReleasesByGame(gameId);
+      expect(releases).toEqual([{ id: releaseId, gameId, title: 'Early Access' }]);
+      const editions = catalog.listEditionsByRelease(releases[0]!.id);
+      expect(editions).toEqual([{ id: editionId, releaseId, name: 'Deluxe' }]);
+      const products = catalog.listProductsByEdition(editions[0]!.id);
+      expect(products).toHaveLength(2);
+      expect(products).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: pcProductId,
+            platform: { family: 'pc', variant: 'steam-compatible' },
+          }),
+          expect.objectContaining({
+            id: ps5ProductId,
+            platform: { family: 'playstation', variant: 'PS5' },
+          }),
+        ]),
+      );
+      expect(catalog.listComponentsForParent(ps5ProductId)).toEqual([composition]);
+      const restoredMapping = catalog.getMapping(identity);
+      expect(restoredMapping).toEqual(mapping);
+      expect(restoredMapping.productId).toBe(ps5ProductId);
+      await restarted.close();
+    } finally {
       rmSync(directory, { recursive: true, force: true });
     }
   });

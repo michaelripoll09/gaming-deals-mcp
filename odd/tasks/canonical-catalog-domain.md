@@ -57,16 +57,17 @@ Implement catalog domain types/validation, Game → Release → Edition → Prod
 - [ ] Native full-PR review remains blocked at lineage `review-10ad41b8103663df` (`reviewing`/`collect`): grouped and single-slot captures returned unknown/expired/different session route with `mutation_performed: false`; no native reviewer ran or produced a verdict. Do not replay/restart; preserve for manual harness follow-up.
 - GitHub Codex review at `7fb817a` reported two actionable P2 findings tracked in C5 and C6 below.
 
-### C5 — Permit explicit ambiguous-to-unmatched mapping demotion (in progress)
+### C5 — Permit explicit ambiguous-to-unmatched mapping demotion (done)
 - [x] Add a regression test proving an ambiguous mapping may be explicitly demoted to `unmatched`, clearing its candidate Product ID, while still preventing implicit promotion to `probable` or `verified`.
 - [x] Implement the narrow transition via strict TDD and verify identity/state roundtrip.
-- [ ] Commit evidence: pending.
-- Evidence: RED focused suite 1 failed/45 passed before source change; a first attempted assertion order failed after the intended demotion (the test was corrected to check forbidden promotions before demotion); GREEN 46 passed, 0 skipped.
+- [x] Commit `385bed8e88b94891131bc8896ebdd729c11783c3` (`fix(catalog): allow clearing ambiguous mappings`).
+- Evidence: RED focused suite 1 failed/45 passed before source change; a first attempted assertion order failed after the intended demotion (the test was corrected to check forbidden promotions before demotion); GREEN 46 passed, 0 skipped. Independent verification passed focused tests, typecheck, lint, and diff-check.
 
-### C6 — Enforce ambiguous-state guard atomically (pending)
-- [ ] Add deterministic interleaving regression proving a stale pre-read cannot overwrite a concurrently ambiguous mapping.
-- [ ] Enforce allowed transitions atomically in SQLite and verify new/duplicate/mapping behavior.
+### C6 — Enforce ambiguous-state guard atomically (in progress)
+- [x] Add deterministic interleaving regression proving a stale pre-read cannot overwrite a concurrently ambiguous mapping.
+- [x] Enforce allowed transitions atomically in SQLite and verify new/duplicate/mapping behavior.
 - [ ] Commit evidence: pending.
+- Evidence: after correcting a Windows temp-directory cleanup `EPERM`, the pre-implementation RED was `expected function to throw an error, but it didn't`. GREEN focused suite passed 47 tests, 0 skipped; typecheck, lint, diff-check, and independent verification passed.
 
 ## Acceptance criteria
 - Canonical identity is internal and opaque; external IDs remain mapping provenance.

@@ -337,6 +337,85 @@ describe('canonical catalog persistence', () => {
     db.close();
   });
 
+  it('rejects a stale promotion when another connection marks the mapping ambiguous', async () => {
+    const { mkdtempSync, rmSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const directory = mkdtempSync(join(tmpdir(), 'catalog-mapping-race-'));
+    const path = join(directory, 'catalog.sqlite');
+    let firstDb: ReturnType<typeof openDatabase> | undefined;
+    let secondDb: ReturnType<typeof openDatabase> | undefined;
+    try {
+      firstDb = openDatabase(path);
+      secondDb = openDatabase(path);
+      const firstConnection = firstDb;
+      const secondConnection = secondDb;
+      const setup = new CatalogRepository(firstConnection);
+      const gameId = setup.createGame({ canonicalTitle: 'Game' });
+      const releaseId = setup.createRelease({ gameId, title: 'Release' });
+      const editionId = setup.createEdition({ releaseId, name: 'Standard' });
+      const productId = setup.createProduct({
+        editionId,
+        platform: { family: 'pc' },
+        distribution: 'digital_storefront',
+      });
+      const identity = { providerId: 'store', providerProductId: 'racing-mapping' };
+      setup.upsertMapping({ ...identity, state: 'probable', productId });
+
+      let interleaved = false;
+      const originalPrepare = firstConnection.prepare.bind(firstConnection);
+      const interceptedDb = new Proxy(firstConnection, {
+        get(target, property) {
+          if (property === 'prepare') {
+            return (sql: string) => {
+              const statement = originalPrepare(sql);
+              if (
+                sql !==
+                'SELECT id, state FROM provider_product_mappings WHERE provider_id = ? AND provider_product_id = ?'
+              ) {
+                return statement;
+              }
+              return new Proxy(statement, {
+                get(inner, member) {
+                  if (member === 'get') {
+                    return (...parameters: unknown[]) => {
+                      const row = inner.get(...parameters);
+                      if (!interleaved) {
+                        interleaved = true;
+                        secondConnection
+                          .prepare(
+                            'UPDATE provider_product_mappings SET state = ?, product_id = ? WHERE provider_id = ? AND provider_product_id = ?',
+                          )
+                          .run('ambiguous', productId, identity.providerId, identity.providerProductId);
+                      }
+                      return row;
+                    };
+                  }
+                  const value = Reflect.get(inner, member, inner) as unknown;
+                  return typeof value === 'function' ? value.bind(inner) : value;
+                },
+              });
+            };
+          }
+          const value = Reflect.get(target, property, target) as unknown;
+          return typeof value === 'function' ? value.bind(target) : value;
+        },
+      });
+      const racingCatalog = new CatalogRepository(interceptedDb);
+
+      expect(() =>
+        racingCatalog.upsertMapping({ ...identity, state: 'verified', productId }),
+      ).toThrow(expect.objectContaining({ code: 'INPUT_INVALID' }));
+      expect(interleaved).toBe(true);
+      expect(setup.getMapping(identity)).toMatchObject({ ...identity, state: 'ambiguous' });
+
+    } finally {
+      secondDb?.close();
+      firstDb?.close();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it('clears an ambiguous mapping to unmatched without changing its identity', () => {
     const db = openDatabase(':memory:');
     const catalog = new CatalogRepository(db);

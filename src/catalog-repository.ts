@@ -340,13 +340,15 @@ export class CatalogRepository {
         throw new AppError('INPUT_INVALID', 'Catalog input is invalid');
       }
       const id = previous?.id ?? newId();
-      this.db
+      const result = this.db
         .prepare(
           `INSERT INTO provider_product_mappings (
           id, provider_id, provider_product_id, product_id, state
         ) VALUES (?, ?, ?, ?, ?)
         ON CONFLICT(provider_id, provider_product_id)
-        DO UPDATE SET product_id = excluded.product_id, state = excluded.state`,
+        DO UPDATE SET product_id = excluded.product_id, state = excluded.state
+        WHERE provider_product_mappings.state <> 'ambiguous'
+          OR excluded.state IN ('ambiguous', 'unmatched')`,
         )
         .run(
           id,
@@ -355,6 +357,9 @@ export class CatalogRepository {
           mapping.state === 'unmatched' ? null : mapping.productId,
           mapping.state,
         );
+      if (result.changes !== 1) {
+        throw new AppError('INPUT_INVALID', 'Catalog input is invalid');
+      }
       return this.getMappingUnsafe({
         providerId: mapping.providerId,
         providerProductId: mapping.providerProductId,

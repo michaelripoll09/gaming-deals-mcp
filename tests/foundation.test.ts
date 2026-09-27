@@ -296,6 +296,80 @@ describe('SQLite foundation', () => {
     holder.close();
   });
 
+  it.each([
+    ['COMMIT', 'COMMIT;'],
+    ['ROLLBACK', 'ROLLBACK;'],
+    ['SAVEPOINT', 'SAVEPOINT migration_savepoint;'],
+    ['RELEASE', 'RELEASE migration_savepoint;'],
+    ['END', 'END;'],
+  ])('rejects migration transaction control %s as invalid configuration', (_name, sql) => {
+    const path = temporaryDatabase();
+    let opened: Database.Database | undefined;
+    let error: unknown;
+    try {
+      opened = openDatabase(path, { migrations: [{ version: 1, name: 'unsafe', sql }] });
+    } catch (cause) {
+      error = cause;
+    } finally {
+      opened?.close();
+    }
+    expect(error).toMatchObject({ code: 'CONFIG_INVALID' });
+  });
+
+  it('rejects transaction control in multi-statement SQL before any migration effects', () => {
+    const path = temporaryDatabase();
+    const seed = openDatabase(path, { migrations: [] });
+    seed.close();
+
+    expect(() =>
+      openDatabase(path, {
+        migrations: [
+          {
+            version: 1,
+            name: 'unsafe-sequence',
+            sql: 'BEGIN; CREATE TABLE should_not_exist (id INTEGER); COMMIT;',
+          },
+        ],
+      }),
+    ).toThrow(expect.objectContaining({ code: 'CONFIG_INVALID' }));
+
+    const db = new Database(path);
+    expect(db.prepare("SELECT name FROM sqlite_master WHERE name = 'should_not_exist'").get()).toBe(
+      undefined,
+    );
+    expect(db.prepare('SELECT version FROM schema_migrations').all()).toEqual([]);
+    db.close();
+  });
+
+  it('allows forbidden words in comments, strings, and longer identifiers', () => {
+    const db = openDatabase(':memory:', {
+      migrations: [
+        {
+          version: 1,
+          name: 'safe-keywords',
+          sql: `-- BEGIN; COMMIT; ROLLBACK;
+/* SAVEPOINT; RELEASE; END; */
+            CREATE TABLE beginning_committee (
+              ending TEXT DEFAULT 'BEGIN; COMMIT; ROLLBACK; SAVEPOINT; RELEASE; END; it''s safe',
+              rollback_count INTEGER DEFAULT 0,
+              "COMMIT; quoted" INTEGER,
+              \`END; quoted\` INTEGER,
+              [RELEASE; quoted] TEXT
+            );
+            CREATE TABLE savepoints_released (id INTEGER);`,
+        },
+      ],
+    });
+    expect(
+      db.prepare("SELECT name FROM sqlite_master WHERE name = 'beginning_committee'").get(),
+    ).toEqual({ name: 'beginning_committee' });
+    expect(
+      db.prepare("SELECT name FROM sqlite_master WHERE name = 'savepoints_released'").get(),
+    ).toEqual({ name: 'savepoints_released' });
+    expect(db.prepare('SELECT version FROM schema_migrations').all()).toEqual([{ version: 1 }]);
+    db.close();
+  });
+
   it('rejects migration drift and future schemas without leaking database content', () => {
     const path = temporaryDatabase();
     const first = openDatabase(path);

@@ -139,10 +139,79 @@ function validateMigrations(migrations: readonly Migration[]): void {
   const versions = migrations.map((migration) => migration.version);
   if (
     versions.some((version, index) => !Number.isSafeInteger(version) || version !== index + 1) ||
-    migrations.some((migration) => !migration.name.trim() || !migration.sql.trim())
+    migrations.some(
+      (migration) =>
+        !migration.name.trim() || !migration.sql.trim() || hasTransactionControl(migration.sql),
+    )
   ) {
     throw new AppError('CONFIG_INVALID', 'Migration definitions are invalid');
   }
+}
+
+function hasTransactionControl(sql: string): boolean {
+  const transactionCommands = new Set([
+    'BEGIN',
+    'COMMIT',
+    'END',
+    'ROLLBACK',
+    'SAVEPOINT',
+    'RELEASE',
+  ]);
+  let statementStart = true;
+
+  for (let index = 0; index < sql.length;) {
+    const character = sql[index]!;
+    const next = sql[index + 1];
+
+    if (/\s/.test(character)) {
+      index += 1;
+      continue;
+    }
+    if (character === '-' && next === '-') {
+      index += 2;
+      while (index < sql.length && sql[index] !== '\n' && sql[index] !== '\r') index += 1;
+      continue;
+    }
+    if (character === '/' && next === '*') {
+      index += 2;
+      while (index < sql.length && !(sql[index] === '*' && sql[index + 1] === '/')) index += 1;
+      index = Math.min(sql.length, index + 2);
+      continue;
+    }
+    if (character === ';') {
+      statementStart = true;
+      index += 1;
+      continue;
+    }
+    if (character === "'" || character === '"' || character === '`' || character === '[') {
+      const closing = character === '[' ? ']' : character;
+      statementStart = false;
+      index += 1;
+      while (index < sql.length) {
+        if (sql[index] === closing) {
+          if (sql[index + 1] === closing) {
+            index += 2;
+            continue;
+          }
+          index += 1;
+          break;
+        }
+        index += 1;
+      }
+      continue;
+    }
+    if (statementStart) {
+      const start = index;
+      while (index < sql.length && /[A-Za-z0-9_$\u0080-\uFFFF]/.test(sql[index]!)) index += 1;
+      const token = sql.slice(start, index).toUpperCase();
+      statementStart = false;
+      if (transactionCommands.has(token)) return true;
+      if (index > start) continue;
+    }
+    statementStart = false;
+    index += 1;
+  }
+  return false;
 }
 
 function checksum(migration: Migration): string {

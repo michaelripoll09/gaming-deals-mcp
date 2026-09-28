@@ -1,5 +1,37 @@
 export { loadConfig, type AppConfig, type ConfigOverrides } from './config.js';
-export { createCoreServices, type Clock, type CoreServices } from './core-services.js';
+export {
+  createCoreServices,
+  type Clock,
+  type CoreServices,
+  type CoreServicesOptions,
+} from './core-services.js';
+export {
+  capabilityNames,
+  capabilitySchema,
+  createProviderRegistry,
+  providerDefinitionSchema,
+  providerIdSchema,
+  type CatalogProvider,
+  type CurrencyProvider,
+  type DealProvider,
+  type LibraryProvider,
+  type NotificationProvider,
+  type PhysicalStockProvider,
+  type ProviderAdapter,
+  type ProviderCapability,
+  type ProviderCapabilityAdapter,
+  type ProviderDefinition,
+  type ProviderId,
+  type ProviderRegistry,
+  type RegisteredProvider,
+  type SubscriptionProvider,
+  type WishlistProvider,
+} from './providers/registry.js';
+export {
+  requestProviderJson,
+  type ProviderRequestDependencies,
+  type ProviderRequestOptions,
+} from './providers/request-policy.js';
 export {
   CatalogRepository,
   type NewEdition,

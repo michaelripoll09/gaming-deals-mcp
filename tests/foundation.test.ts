@@ -4,6 +4,13 @@ import { loadConfig } from '../src/config.js';
 import { AppError } from '../src/errors.js';
 import { Money } from '../src/money.js';
 import { createCoreServices } from '../src/core-services.js';
+import {
+  createCoreServices as createPublicCoreServices,
+  createProviderRegistry,
+  providerIdSchema,
+  requestProviderJson,
+  type CoreServicesOptions,
+} from '../src/index.js';
 import { openDatabase } from '../src/persistence/sqlite.js';
 import { existsSync, mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -12,6 +19,7 @@ import { fork } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import ts from 'typescript';
+import { z } from 'zod';
 
 const temporaryDirectories: string[] = [];
 
@@ -465,6 +473,39 @@ describe('SQLite foundation', () => {
 });
 
 describe('Core services lifecycle', () => {
+  it('exposes an empty provider registry without network activity and keeps injected databases open', async () => {
+    const db = openDatabase(':memory:');
+    const fetch = vi.spyOn(globalThis, 'fetch');
+    const options: CoreServicesOptions = { database: db };
+    const services = createPublicCoreServices(options);
+
+    expect(services.providers.list()).toEqual([]);
+    expect(fetch).not.toHaveBeenCalled();
+    await services.close();
+    await services.close();
+    expect(db.prepare('SELECT 1 AS alive').get()).toEqual({ alive: 1 });
+    db.close();
+    fetch.mockRestore();
+  });
+
+  it('exports provider registry and request-policy APIs from the public entry point', async () => {
+    expect(createProviderRegistry().list()).toEqual([]);
+    expect(providerIdSchema.parse('sample-provider')).toBe('sample-provider');
+    await expect(
+      requestProviderJson(
+        { url: 'https://provider.invalid', schema: z.object({ ok: z.boolean() }) },
+        {
+          fetch: vi.fn(async () => new Response('{"ok":true}', { status: 200 })),
+          now: () => 0,
+          sleep: async () => {},
+          random: () => 0,
+          setTimer: () => 0,
+          clearTimer: () => {},
+        },
+      ),
+    ).resolves.toEqual({ ok: true });
+  });
+
   it('does not close injected databases but disables catalog access after service shutdown', async () => {
     const db = openDatabase(':memory:');
     const services = createCoreServices({ database: db });

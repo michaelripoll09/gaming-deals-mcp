@@ -4,6 +4,9 @@ import { AppError } from './errors.js';
 import { CatalogRepository } from './catalog-repository.js';
 import { openDatabase } from './persistence/sqlite.js';
 import { SettingsStore } from './settings.js';
+import { createProviderRegistry } from './providers/registry.js';
+
+type ProviderRegistry = ReturnType<typeof createProviderRegistry>;
 
 export interface Clock {
   now(): number;
@@ -14,6 +17,7 @@ export interface CoreServices {
   readonly clock: Clock;
   readonly settings: SettingsStore;
   readonly catalog: CatalogRepository;
+  readonly providers: ProviderRegistry;
   close(): Promise<void>;
 }
 
@@ -57,6 +61,7 @@ export function createCoreServices(options: CoreServicesOptions = {}): CoreServi
     clock,
     settings,
     catalog,
+    providers: createProviderRegistry(),
     async close(): Promise<void> {
       if (closed) return;
       closed = true;

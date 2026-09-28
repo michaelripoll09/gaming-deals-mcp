@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3';
 import { loadConfig, type AppConfig } from './config.js';
 import { AppError } from './errors.js';
+import { CatalogRepository } from './catalog-repository.js';
 import { openDatabase } from './persistence/sqlite.js';
 import { SettingsStore } from './settings.js';
 
@@ -12,6 +13,7 @@ export interface CoreServices {
   readonly config: AppConfig;
   readonly clock: Clock;
   readonly settings: SettingsStore;
+  readonly catalog: CatalogRepository;
   close(): Promise<void>;
 }
 
@@ -29,6 +31,7 @@ export function createCoreServices(options: CoreServicesOptions = {}): CoreServi
   const db = options.database ?? openDatabase(bootstrapConfig.databasePath);
   let closed = false;
   let settings: SettingsStore;
+  let catalog: CatalogRepository;
   let config: AppConfig;
   try {
     settings = new SettingsStore(
@@ -36,6 +39,7 @@ export function createCoreServices(options: CoreServicesOptions = {}): CoreServi
       () => closed,
       () => clock.now(),
     );
+    catalog = new CatalogRepository(db, () => closed);
     config = loadConfig(env, {}, settings.snapshot());
   } catch (cause) {
     if (ownsDatabase) {
@@ -52,6 +56,7 @@ export function createCoreServices(options: CoreServicesOptions = {}): CoreServi
     config,
     clock,
     settings,
+    catalog,
     async close(): Promise<void> {
       if (closed) return;
       closed = true;

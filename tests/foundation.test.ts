@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import { fork } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { createHash } from 'node:crypto';
 import ts from 'typescript';
 
 const temporaryDirectories: string[] = [];
@@ -105,22 +106,72 @@ describe('SQLite foundation', () => {
     expect(db.pragma('journal_mode', { simple: true })).toBe('wal');
     expect(db.pragma('busy_timeout', { simple: true })).toBe(5000);
     expect(db.pragma('synchronous', { simple: true })).toBe(1);
-    expect(db.prepare('SELECT version, name, checksum FROM schema_migrations').all()).toEqual([
+    const migrations = db
+      .prepare('SELECT version, name, checksum FROM schema_migrations ORDER BY version')
+      .all() as { version: number; name: string; checksum: string }[];
+    const migrationOneSql = `CREATE TABLE app_settings (
+      key TEXT PRIMARY KEY,
+      value_json TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    ) STRICT;`;
+    expect(migrations).toHaveLength(2);
+    expect(migrations[0]).toEqual({
+      version: 1,
+      name: 'typed-settings',
+      checksum: createHash('sha256').update(`1\0typed-settings\0${migrationOneSql}`).digest('hex'),
+    });
+    expect(migrations[1]).toMatchObject({ version: 2, name: 'canonical-catalog' });
+    expect(migrations[1]?.checksum).toMatch(/^[a-f0-9]{64}$/);
+    expect(db.prepare('PRAGMA foreign_key_list(releases)').all()).toEqual([
       expect.objectContaining({
-        version: 1,
-        name: 'typed-settings',
-        checksum: expect.stringMatching(/^[a-f0-9]{64}$/),
+        table: 'games',
+        from: 'game_id',
+        to: 'id',
+        on_delete: 'RESTRICT',
       }),
     ]);
+    expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
     expect(db.prepare('PRAGMA table_info(app_settings)').all()).toEqual([
       expect.objectContaining({ name: 'key', type: 'TEXT', notnull: 1, pk: 1 }),
       expect.objectContaining({ name: 'value_json', type: 'TEXT', notnull: 1, pk: 0 }),
       expect.objectContaining({ name: 'updated_at', type: 'TEXT', notnull: 1, pk: 0 }),
     ]);
     const contender = openDatabase(db.name);
-    expect(contender.prepare('SELECT version FROM schema_migrations').all()).toHaveLength(1);
+    expect(contender.prepare('SELECT version FROM schema_migrations').all()).toHaveLength(2);
     contender.close();
     db.close();
+  });
+
+  it('upgrades migration 001 to 002 exactly once and preserves migration 001 checksum', () => {
+    const path = temporaryDatabase();
+    const originalSql = `CREATE TABLE app_settings (
+      key TEXT PRIMARY KEY,
+      value_json TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    ) STRICT;`;
+    const versionOneOnly = openDatabase(path, {
+      migrations: [{ version: 1, name: 'typed-settings', sql: originalSql }],
+    });
+    const oldChecksum = versionOneOnly
+      .prepare('SELECT checksum FROM schema_migrations WHERE version = 1')
+      .pluck()
+      .get();
+    versionOneOnly.close();
+
+    const upgraded = openDatabase(path);
+    expect(
+      upgraded.prepare('SELECT version FROM schema_migrations ORDER BY version').pluck().all(),
+    ).toEqual([1, 2]);
+    expect(
+      upgraded.prepare('SELECT checksum FROM schema_migrations WHERE version = 1').pluck().get(),
+    ).toBe(oldChecksum);
+    upgraded.close();
+
+    const reopened = openDatabase(path);
+    expect(
+      reopened.prepare('SELECT version FROM schema_migrations ORDER BY version').pluck().all(),
+    ).toEqual([1, 2]);
+    reopened.close();
   });
 
   it('closes an owned database when persisted settings fail validation', () => {
@@ -242,10 +293,17 @@ describe('SQLite foundation', () => {
       const results = await Promise.all(outcomes);
       expect(results).toHaveLength(2);
       const db = new Database(path);
-      expect(db.prepare('SELECT version, name, checksum FROM schema_migrations').all()).toEqual([
+      expect(
+        db.prepare('SELECT version, name, checksum FROM schema_migrations ORDER BY version').all(),
+      ).toEqual([
         expect.objectContaining({
           version: 1,
           name: 'typed-settings',
+          checksum: expect.stringMatching(/^[a-f0-9]{64}$/),
+        }),
+        expect.objectContaining({
+          version: 2,
+          name: 'canonical-catalog',
           checksum: expect.stringMatching(/^[a-f0-9]{64}$/),
         }),
       ]);
@@ -381,7 +439,7 @@ describe('SQLite foundation', () => {
 
     const futurePath = temporaryDatabase();
     const future = openDatabase(futurePath);
-    future.exec('UPDATE schema_migrations SET version = 999');
+    future.exec('UPDATE schema_migrations SET version = 999 WHERE version = 2');
     future.close();
     expect(() => openDatabase(futurePath)).toThrow(
       expect.objectContaining({ code: 'DATABASE_VERSION_UNSUPPORTED' }),
@@ -407,12 +465,26 @@ describe('SQLite foundation', () => {
 });
 
 describe('Core services lifecycle', () => {
-  it('does not close injected databases during normal shutdown', async () => {
+  it('does not close injected databases but disables catalog access after service shutdown', async () => {
     const db = openDatabase(':memory:');
     const services = createCoreServices({ database: db });
     await services.close();
+    await services.close();
     expect(db.prepare('SELECT 1 AS alive').get()).toEqual({ alive: 1 });
+    expect(() => services.catalog.createGame({ canonicalTitle: 'After close' })).toThrow(
+      expect.objectContaining({ code: 'PERSISTENCE_UNAVAILABLE' }),
+    );
     db.close();
+  });
+
+  it('closes owned databases and disables catalog access idempotently', async () => {
+    const services = createCoreServices({ env: { DATABASE_PATH: temporaryDatabase() } });
+    services.catalog.createGame({ canonicalTitle: 'Before close' });
+    await services.close();
+    await services.close();
+    expect(() => services.catalog.createGame({ canonicalTitle: 'After close' })).toThrow(
+      expect.objectContaining({ code: 'PERSISTENCE_UNAVAILABLE' }),
+    );
   });
 
   it('rejects non-finite, unsafe, and out-of-range clock timestamps', () => {

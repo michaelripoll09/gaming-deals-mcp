@@ -162,7 +162,7 @@ export interface RegisteredProvider {
   readonly enabled: boolean;
 }
 
-interface ProviderRegistry {
+export interface ProviderRegistry {
   register(definition: ProviderDefinition, adapter: ProviderAdapter): RegisteredProvider;
   get(providerId: ProviderId): RegisteredProvider;
   list(): readonly RegisteredProvider[];

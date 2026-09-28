@@ -22,14 +22,11 @@ export {
   type ProviderCapabilityAdapter,
   type ProviderDefinition,
   type ProviderId,
+  type ProviderRegistry,
   type RegisteredProvider,
   type SubscriptionProvider,
   type WishlistProvider,
 } from './providers/registry.js';
-export type ProviderRegistry = ReturnType<
-  typeof import('./providers/registry.js').createProviderRegistry
->;
-
 export {
   requestProviderJson,
   type ProviderRequestDependencies,

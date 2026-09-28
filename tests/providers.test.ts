@@ -98,12 +98,36 @@ type ProviderContractsHaveExactMarkers = [
   AssertNot<IsAssignable<{ readonly capability: 'deal' }, CatalogProvider>>,
   AssertNot<IsAssignable<{ readonly capability: 'catalog' }, DealProvider>>,
 ];
+const providerContractsHaveExactMarkers: ProviderContractsHaveExactMarkers = [
+  true,
+  true,
+  true,
+  true,
+  true,
+  true,
+  true,
+  true,
+  false,
+  false,
+];
 
 const catalogBinding: ProviderAdapter[number] = { capability: 'catalog' };
 const catalogAdapter: ProviderAdapter = [catalogBinding];
 
 describe('provider metadata and runtime registry', () => {
   it('validates stable provider IDs, source categories, acquisition values, and capability names', () => {
+    expect(providerContractsHaveExactMarkers).toEqual([
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false,
+    ]);
     expect(providerIdSchema.parse('good-provider_2')).toBe('good-provider_2');
     expect(() => providerIdSchema.parse('Not A Slug')).toThrow();
     expect(capabilityNames).toEqual([
@@ -270,7 +294,8 @@ describe('provider metadata and runtime registry', () => {
         .supportedPlatforms,
     ).toEqual(['nintendo', 'xbox']);
     const registry = createProviderRegistry();
-    const { supportedPlatforms: _platforms, ...platformAgnosticDefinition } = definition();
+    const platformAgnosticDefinition = definition();
+    delete platformAgnosticDefinition.supportedPlatforms;
     registry.register(platformAgnosticDefinition, catalogAdapter);
     expect(registry.supports('sample-store', 'catalog', 'playstation')).toBe(true);
   });

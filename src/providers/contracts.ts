@@ -18,8 +18,7 @@ const providerCatalogItemInputSchema = z
   .strict();
 
 export const providerCatalogItemSchema = providerCatalogItemInputSchema.transform(
-  ({ platform, ...item }) =>
-    Object.freeze({ ...item, platform: Object.freeze({ ...platform }) }),
+  ({ platform, ...item }) => Object.freeze({ ...item, platform: Object.freeze({ ...platform }) }),
 );
 export type ProviderCatalogItem = z.output<typeof providerCatalogItemSchema>;
 
@@ -58,12 +57,11 @@ const providerDealInputSchema = z
   })
   .strict();
 
-export const providerDealSchema = providerDealInputSchema.transform(
-  ({ priceOriginal, ...deal }) =>
-    Object.freeze({
-      ...deal,
-      priceOriginal: Money.create(priceOriginal.amountMinor, priceOriginal.currency),
-    }),
+export const providerDealSchema = providerDealInputSchema.transform(({ priceOriginal, ...deal }) =>
+  Object.freeze({
+    ...deal,
+    priceOriginal: Money.create(priceOriginal.amountMinor, priceOriginal.currency),
+  }),
 );
 export type ProviderDeal = z.output<typeof providerDealSchema>;
 
@@ -82,4 +80,3 @@ export function validateProviderDeal(input: unknown): ProviderDeal {
     throw new AppError('INPUT_INVALID', 'Provider deal is invalid');
   }
 }
-

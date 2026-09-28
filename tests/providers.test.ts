@@ -429,9 +429,9 @@ describe('provider metadata and runtime registry', () => {
     expect(validateProviderDeal({ ...deal, providerOfferId: ' offer-1 ' }).providerOfferId).toBe(
       'offer-1',
     );
-    expect(validateProviderDeal({ ...deal, providerProductId: ' product-1 ' }).providerProductId).toBe(
-      'product-1',
-    );
+    expect(
+      validateProviderDeal({ ...deal, providerProductId: ' product-1 ' }).providerProductId,
+    ).toBe('product-1');
     for (const invalidId of ['', '   ']) {
       expect(() => validateProviderDeal({ ...deal, providerOfferId: invalidId })).toThrow(
         'Input is invalid',
@@ -451,9 +451,9 @@ describe('provider metadata and runtime registry', () => {
         'Input is invalid',
       );
     }
-    expect(() =>
-      validateProviderDeal({ ...deal, offerUrl: 'javascript:alert(1)' }),
-    ).toThrow('Input is invalid');
+    expect(() => validateProviderDeal({ ...deal, offerUrl: 'javascript:alert(1)' })).toThrow(
+      'Input is invalid',
+    );
     const malformedSensitiveUrl = 'https://bad host.example/path?token=private-value';
     try {
       validateProviderDeal({ ...deal, offerUrl: malformedSensitiveUrl });
@@ -479,10 +479,7 @@ describe('provider metadata and runtime registry', () => {
       'catalog',
     );
     expect(enabledCatalog.status).toBe('available');
-    if (
-      enabledCatalog.status === 'available' &&
-      enabledCatalog.adapter.capability === 'catalog'
-    ) {
+    if (enabledCatalog.status === 'available' && enabledCatalog.adapter.capability === 'catalog') {
       expect(await enabledCatalog.adapter.listCatalog()).toEqual([]);
     }
     const enabledDeal = registry.getCapability('sample-store', 'deal');

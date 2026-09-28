@@ -271,7 +271,10 @@ export function createProviderRegistry(): ProviderRegistry {
     providerId: ProviderId,
     capability: 'catalog',
   ): ProviderCapabilityAccess<'catalog'>;
-  function getCapability(providerId: ProviderId, capability: 'deal'): ProviderCapabilityAccess<'deal'>;
+  function getCapability(
+    providerId: ProviderId,
+    capability: 'deal',
+  ): ProviderCapabilityAccess<'deal'>;
   function getCapability(
     providerId: ProviderId,
     capability: Exclude<ProviderCapability, 'catalog' | 'deal'>,
@@ -280,7 +283,10 @@ export function createProviderRegistry(): ProviderRegistry {
     providerId: ProviderId,
     capability: ProviderCapability,
   ): ProviderCapabilityAccess;
-  function getCapability(providerId: ProviderId, capability: ProviderCapability): ProviderCapabilityAccess {
+  function getCapability(
+    providerId: ProviderId,
+    capability: ProviderCapability,
+  ): ProviderCapabilityAccess {
     const entry = getEntry(providerId);
     const provider = registered(entry);
     if (!entry.definition.capabilities.includes(capability)) {
@@ -288,7 +294,8 @@ export function createProviderRegistry(): ProviderRegistry {
     }
     if (!entry.enabled) return { status: 'disabled', provider };
     const adapter = entry.adapter.find((binding) => binding.capability === capability);
-    if (!adapter) throw new AppError('INPUT_INVALID', 'Provider capabilities do not match its adapter');
+    if (!adapter)
+      throw new AppError('INPUT_INVALID', 'Provider capabilities do not match its adapter');
     return { status: 'available', provider, adapter };
   }
 

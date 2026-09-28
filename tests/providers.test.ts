@@ -306,6 +306,63 @@ describe('provider metadata and runtime registry', () => {
     expect(() => registry.register(definition(), [{ capability: 'deal' }])).toThrow();
   });
 
+  it('requires explicit experimental opt-in to enable experimental or incomplete providers', () => {
+    const registry = createProviderRegistry();
+    const experimental = definition({
+      providerId: 'experimental-store',
+      access: { state: 'experimental', onboarding: completeGate },
+    });
+    registry.register(experimental, catalogAdapter);
+
+    expect(registry.get('experimental-store').enabled).toBe(false);
+    expect(registry.setEnabled('experimental-store', true)).toBe(false);
+    expect(
+      registry.setEnabled('experimental-store', true, { explicitExperimentalOptIn: true }),
+    ).toBe(true);
+    expect(registry.enabledProvidersForCapability('catalog')).toHaveLength(1);
+    expect(registry.get('experimental-store').definition.access.state).toBe('experimental');
+    expect(registry.setEnabled('experimental-store', false)).toBe(true);
+    expect(registry.enabledProvidersForCapability('catalog')).toHaveLength(0);
+    expect(
+      registry.setEnabled('experimental-store', true, { explicitExperimentalOptIn: true }),
+    ).toBe(true);
+
+    const incompleteGate = {
+      ...completeGate,
+      permittedUse: gateTopic('unresolved', 'Not confirmed', 'https://example.test/use'),
+    };
+    registry.register(
+      definition({
+        providerId: 'incomplete-store',
+        access: { state: 'approved', onboarding: incompleteGate },
+      }),
+      catalogAdapter,
+    );
+    expect(registry.setEnabled('incomplete-store', true)).toBe(false);
+    expect(registry.setEnabled('incomplete-store', true, { explicitExperimentalOptIn: true })).toBe(
+      true,
+    );
+
+    const prohibitedGate = {
+      ...completeGate,
+      automatedPriceComparisonPermission: {
+        status: 'prohibited' as const,
+        content: 'Comparison prohibited',
+        evidence: 'https://example.test/prohibited',
+      },
+    };
+    registry.register(
+      definition({
+        providerId: 'prohibited-store',
+        access: { state: 'experimental', onboarding: prohibitedGate },
+      }),
+      catalogAdapter,
+    );
+    expect(registry.setEnabled('prohibited-store', true, { explicitExperimentalOptIn: true })).toBe(
+      false,
+    );
+  });
+
   it('registers immutable definitions in deterministic order and provides get, list, capability, and enable controls', () => {
     const registry = createProviderRegistry();
     registry.register(definition({ providerId: 'z-store' }), catalogAdapter);

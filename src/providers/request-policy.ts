@@ -56,17 +56,20 @@ function cancellationError(): AppError {
   return new AppError('PROVIDER_CANCELLED', 'Provider request cancelled');
 }
 
-function parseRetryAfter(value: string | null, now: number): number | undefined {
+function parseRetryAfter(value: string | null, now: number): number | 'over_limit' | undefined {
   if (value === null) return undefined;
   const normalized = value.trim();
   if (/^\d+$/.test(normalized)) {
-    const seconds = Number(normalized);
-    return Number.isFinite(seconds) ? Math.min(seconds * 1000, MAX_WAIT_MS) : MAX_WAIT_MS;
+    const milliseconds = Number(normalized) * 1000;
+    return !Number.isFinite(milliseconds) || milliseconds > MAX_WAIT_MS
+      ? 'over_limit'
+      : milliseconds;
   }
   if (/^[+-]?(?:\d+\.?\d*|\.\d+)$/.test(normalized)) return undefined;
   const date = Date.parse(normalized);
   if (!Number.isFinite(date)) return undefined;
-  return Math.min(Math.max(0, date - now), MAX_WAIT_MS);
+  const waitMs = Math.max(0, date - now);
+  return waitMs > MAX_WAIT_MS ? 'over_limit' : waitMs;
 }
 
 function backoff(attempt: number, random: number): number {
@@ -217,12 +220,14 @@ export async function requestProviderJson<T>(
           'Provider request failed',
         );
       }
+      const retryAfter =
+        status === 429 ? parseRetryAfter(result.retryAfter, dependencies.now()) : undefined;
+      if (retryAfter === 'over_limit') {
+        throw new AppError('PROVIDER_RATE_LIMITED', 'Provider request failed');
+      }
       const random = dependencies.random();
       if (!Number.isFinite(random) || random < 0 || random >= 1) throw inputError();
-      const waitMs =
-        status === 429
-          ? (parseRetryAfter(result.retryAfter, dependencies.now()) ?? backoff(attempt, random))
-          : backoff(attempt, random);
+      const waitMs = retryAfter ?? backoff(attempt, random);
       try {
         await waitAbortably(dependencies.sleep, waitMs, callerSignal);
       } catch {

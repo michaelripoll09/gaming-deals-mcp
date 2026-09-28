@@ -109,6 +109,17 @@ describe('provider outbound JSON request policy', () => {
     expect(waits).toEqual([2000]);
   });
 
+  it.each([
+    ['delta-seconds', '31'],
+    ['HTTP-date', 'Wed, 01 Jan 2025 00:00:31 GMT'],
+  ])('rejects over-limit %s Retry-After without waiting or retrying', async (_kind, retryAfter) => {
+    const fetch = vi.fn(async () => jsonResponse(429, '', { 'Retry-After': retryAfter }));
+    const sleep = vi.fn(async () => {});
+    await expectCode(request(dependencies(fetch, { sleep })), 'PROVIDER_RATE_LIMITED');
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
   it('supports HTTP-date Retry-After', async () => {
     const waits: number[] = [];
     let calls = 0;

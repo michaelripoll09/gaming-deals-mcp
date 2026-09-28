@@ -173,7 +173,11 @@ export interface ProviderRegistry {
     capability: ProviderCapability,
     platform?: PlatformFamily,
   ): boolean;
-  setEnabled(providerId: ProviderId, enabled: boolean): boolean;
+  setEnabled(
+    providerId: ProviderId,
+    enabled: boolean,
+    options?: { readonly explicitExperimentalOptIn?: boolean },
+  ): boolean;
 }
 
 export function createProviderRegistry(): ProviderRegistry {
@@ -295,15 +299,20 @@ export function createProviderRegistry(): ProviderRegistry {
           definition.supportedPlatforms.includes(platform))
       );
     },
-    setEnabled(providerId, enabled) {
+    setEnabled(providerId, enabled, options) {
       const entry = getEntry(providerId);
       if (enabled) {
         const { automatedPriceComparisonPermission, ...otherTopics } =
           entry.definition.access.onboarding;
+        if (automatedPriceComparisonPermission.status === 'prohibited') return false;
         const gateComplete =
           automatedPriceComparisonPermission.status === 'permitted' &&
           Object.values(otherTopics).every((topic) => topic.status === 'documented');
-        if (entry.definition.access.state !== 'approved' || !gateComplete) return false;
+        if (
+          !(options?.explicitExperimentalOptIn === true) &&
+          (entry.definition.access.state !== 'approved' || !gateComplete)
+        )
+          return false;
       }
       entry.enabled = enabled;
       return true;

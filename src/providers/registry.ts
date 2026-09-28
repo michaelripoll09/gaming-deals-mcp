@@ -1,5 +1,6 @@
 import { AppError } from '../errors.js';
 import { platformFamilySchema, type PlatformFamily } from '../catalog.js';
+import type { ProviderCatalogItem, ProviderDeal } from './contracts.js';
 import { z } from 'zod';
 
 export const providerIdSchema = z
@@ -116,9 +117,11 @@ export type ProviderDefinition = z.infer<typeof providerDefinitionSchema>;
 
 export interface DealProvider {
   readonly capability: 'deal';
+  listDeals(signal?: AbortSignal): Promise<readonly ProviderDeal[]>;
 }
 export interface CatalogProvider {
   readonly capability: 'catalog';
+  listCatalog(signal?: AbortSignal): Promise<readonly ProviderCatalogItem[]>;
 }
 export interface LibraryProvider {
   readonly capability: 'library';
@@ -158,13 +161,33 @@ type DeepReadonly<T> = T extends readonly (infer U)[]
 
 export interface RegisteredProvider {
   readonly definition: DeepReadonly<ProviderDefinition>;
-  readonly adapter: ProviderAdapter;
   readonly enabled: boolean;
 }
+
+export type ProviderCapabilityAdapterFor<C extends ProviderCapability> = Extract<
+  ProviderCapabilityAdapter,
+  { readonly capability: C }
+>;
+
+export type ProviderCapabilityAccess<C extends ProviderCapability = ProviderCapability> =
+  | {
+      readonly status: 'available';
+      readonly provider: RegisteredProvider;
+      readonly adapter: ProviderCapabilityAdapterFor<C>;
+    }
+  | { readonly status: 'disabled'; readonly provider: RegisteredProvider }
+  | { readonly status: 'missing_capability'; readonly provider: RegisteredProvider };
 
 export interface ProviderRegistry {
   register(definition: ProviderDefinition, adapter: ProviderAdapter): RegisteredProvider;
   get(providerId: ProviderId): RegisteredProvider;
+  getCapability(providerId: ProviderId, capability: 'catalog'): ProviderCapabilityAccess<'catalog'>;
+  getCapability(providerId: ProviderId, capability: 'deal'): ProviderCapabilityAccess<'deal'>;
+  getCapability(
+    providerId: ProviderId,
+    capability: Exclude<ProviderCapability, 'catalog' | 'deal'>,
+  ): ProviderCapabilityAccess<Exclude<ProviderCapability, 'catalog' | 'deal'>>;
+  getCapability(providerId: ProviderId, capability: ProviderCapability): ProviderCapabilityAccess;
   list(): readonly RegisteredProvider[];
   providersForCapability(capability: ProviderCapability): readonly RegisteredProvider[];
   enabledProvidersForCapability(capability: ProviderCapability): readonly RegisteredProvider[];
@@ -197,7 +220,12 @@ export function createProviderRegistry(): ProviderRegistry {
   }
 
   function snapshot(definition: ProviderDefinition): DeepReadonly<ProviderDefinition> {
-    const parsed = providerDefinitionSchema.parse(definition);
+    let parsed: ProviderDefinition;
+    try {
+      parsed = providerDefinitionSchema.parse(definition);
+    } catch {
+      throw new AppError('INPUT_INVALID', 'Provider definition is invalid');
+    }
     const onboarding = Object.freeze({
       accessMechanism: Object.freeze({ ...parsed.access.onboarding.accessMechanism }),
       authenticationModel: Object.freeze({ ...parsed.access.onboarding.authenticationModel }),
@@ -235,9 +263,33 @@ export function createProviderRegistry(): ProviderRegistry {
   }): RegisteredProvider {
     return Object.freeze({
       definition: entry.definition,
-      adapter: entry.adapter,
       enabled: entry.enabled,
     });
+  }
+
+  function getCapability(
+    providerId: ProviderId,
+    capability: 'catalog',
+  ): ProviderCapabilityAccess<'catalog'>;
+  function getCapability(providerId: ProviderId, capability: 'deal'): ProviderCapabilityAccess<'deal'>;
+  function getCapability(
+    providerId: ProviderId,
+    capability: Exclude<ProviderCapability, 'catalog' | 'deal'>,
+  ): ProviderCapabilityAccess<Exclude<ProviderCapability, 'catalog' | 'deal'>>;
+  function getCapability(
+    providerId: ProviderId,
+    capability: ProviderCapability,
+  ): ProviderCapabilityAccess;
+  function getCapability(providerId: ProviderId, capability: ProviderCapability): ProviderCapabilityAccess {
+    const entry = getEntry(providerId);
+    const provider = registered(entry);
+    if (!entry.definition.capabilities.includes(capability)) {
+      return { status: 'missing_capability', provider };
+    }
+    if (!entry.enabled) return { status: 'disabled', provider };
+    const adapter = entry.adapter.find((binding) => binding.capability === capability);
+    if (!adapter) throw new AppError('INPUT_INVALID', 'Provider capabilities do not match its adapter');
+    return { status: 'available', provider, adapter };
   }
 
   return {
@@ -267,6 +319,7 @@ export function createProviderRegistry(): ProviderRegistry {
     get(providerId) {
       return registered(getEntry(providerId));
     },
+    getCapability,
     list() {
       return Object.freeze(
         [...providers.values()]

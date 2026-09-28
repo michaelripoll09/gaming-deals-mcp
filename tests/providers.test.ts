@@ -11,10 +11,18 @@ import {
   type NotificationProvider,
   type PhysicalStockProvider,
   type ProviderAdapter,
+  type ProviderCapabilityAccess,
   type ProviderDefinition,
   type SubscriptionProvider,
   type WishlistProvider,
 } from '../src/providers/registry.js';
+import {
+  validateProviderCatalogItem,
+  validateProviderDeal,
+  type ProviderCatalogItem,
+  type ProviderDeal,
+} from '../src/providers/contracts.js';
+import { Money } from '../src/money.js';
 
 function gateTopic(status: 'documented' | 'unresolved', content: string, evidence: string) {
   return { status, content, evidence };
@@ -87,8 +95,24 @@ type IsAssignable<From, To> = [From] extends [To] ? true : false;
 type Assert<T extends true> = T;
 type AssertNot<T extends false> = T;
 type ProviderContractsHaveExactMarkers = [
-  Assert<IsAssignable<{ readonly capability: 'deal' }, DealProvider>>,
-  Assert<IsAssignable<{ readonly capability: 'catalog' }, CatalogProvider>>,
+  Assert<
+    IsAssignable<
+      {
+        readonly capability: 'deal';
+        listDeals: (signal?: AbortSignal) => Promise<readonly ProviderDeal[]>;
+      },
+      DealProvider
+    >
+  >,
+  Assert<
+    IsAssignable<
+      {
+        readonly capability: 'catalog';
+        listCatalog: (signal?: AbortSignal) => Promise<readonly ProviderCatalogItem[]>;
+      },
+      CatalogProvider
+    >
+  >,
   Assert<IsAssignable<{ readonly capability: 'library' }, LibraryProvider>>,
   Assert<IsAssignable<{ readonly capability: 'wishlist' }, WishlistProvider>>,
   Assert<IsAssignable<{ readonly capability: 'subscription' }, SubscriptionProvider>>,
@@ -110,8 +134,23 @@ const providerContractsHaveExactMarkers: ProviderContractsHaveExactMarkers = [
   false,
   false,
 ];
+type ProviderMethodsAcceptOptionalAbortSignals = [
+  Assert<IsAssignable<1, Parameters<CatalogProvider['listCatalog']>['length']>>,
+  Assert<IsAssignable<AbortSignal, NonNullable<Parameters<CatalogProvider['listCatalog']>[0]>>>,
+  Assert<IsAssignable<1, Parameters<DealProvider['listDeals']>['length']>>,
+  Assert<IsAssignable<AbortSignal, NonNullable<Parameters<DealProvider['listDeals']>[0]>>>,
+];
+const providerMethodsAcceptOptionalAbortSignals: ProviderMethodsAcceptOptionalAbortSignals = [
+  true,
+  true,
+  true,
+  true,
+];
 
-const catalogBinding: ProviderAdapter[number] = { capability: 'catalog' };
+const catalogBinding: ProviderAdapter[number] = {
+  capability: 'catalog',
+  listCatalog: async () => [],
+};
 const catalogAdapter: ProviderAdapter = [catalogBinding];
 
 describe('provider metadata and runtime registry', () => {
@@ -128,6 +167,7 @@ describe('provider metadata and runtime registry', () => {
       false,
       false,
     ]);
+    expect(providerMethodsAcceptOptionalAbortSignals).toEqual([true, true, true, true]);
     expect(providerIdSchema.parse('good-provider_2')).toBe('good-provider_2');
     expect(() => providerIdSchema.parse('Not A Slug')).toThrow();
     expect(capabilityNames).toEqual([
@@ -303,7 +343,9 @@ describe('provider metadata and runtime registry', () => {
   it('rejects duplicate and definition-mismatched adapter capabilities at registry registration', () => {
     const registry = createProviderRegistry();
     expect(() => registry.register(definition(), [catalogBinding, catalogBinding])).toThrow();
-    expect(() => registry.register(definition(), [{ capability: 'deal' }])).toThrow();
+    expect(() =>
+      registry.register(definition(), [{ capability: 'deal', listDeals: async () => [] }]),
+    ).toThrow();
   });
 
   it('requires explicit experimental opt-in to enable experimental or incomplete providers', () => {
@@ -361,6 +403,97 @@ describe('provider metadata and runtime registry', () => {
     expect(registry.setEnabled('prohibited-store', true, { explicitExperimentalOptIn: true })).toBe(
       false,
     );
+  });
+
+  it('validates and freezes provider-native catalog and deal records', () => {
+    const item: ProviderCatalogItem = {
+      providerProductId: 'store-product-1',
+      title: 'Example Game',
+      platform: { family: 'pc', variant: 'Steam' },
+      distribution: 'digital_storefront',
+    };
+    const deal: ProviderDeal = {
+      providerOfferId: 'offer-1',
+      providerProductId: 'store-product-1',
+      priceOriginal: Money.create(1299, 'USD'),
+      offerUrl: 'https://store.example/offers/offer-1?campaign=spring',
+    };
+    expect(validateProviderCatalogItem(item)).toEqual(item);
+    expect(validateProviderDeal(deal)).toEqual(deal);
+    expect(
+      validateProviderDeal({ ...deal, offerUrl: 'http://store.example/offers/offer-1' }).offerUrl,
+    ).toBe('http://store.example/offers/offer-1');
+    expect(Object.isFrozen(validateProviderCatalogItem(item))).toBe(true);
+    expect(Object.isFrozen(validateProviderCatalogItem(item).platform)).toBe(true);
+    expect(Object.isFrozen(validateProviderDeal(deal).priceOriginal)).toBe(true);
+    expect(validateProviderDeal({ ...deal, providerOfferId: ' offer-1 ' }).providerOfferId).toBe(
+      'offer-1',
+    );
+    expect(validateProviderDeal({ ...deal, providerProductId: ' product-1 ' }).providerProductId).toBe(
+      'product-1',
+    );
+    for (const invalidId of ['', '   ']) {
+      expect(() => validateProviderDeal({ ...deal, providerOfferId: invalidId })).toThrow(
+        'Input is invalid',
+      );
+      expect(() => validateProviderDeal({ ...deal, providerProductId: invalidId })).toThrow(
+        'Input is invalid',
+      );
+    }
+    expect(() => validateProviderCatalogItem({ ...item, canonicalProductId: 'product-1' })).toThrow(
+      'Input is invalid',
+    );
+    for (const invalidPrice of [
+      { amountMinor: 1, currency: 'ZZZ' },
+      { amountMinor: Number.MAX_SAFE_INTEGER + 1, currency: 'USD' },
+    ]) {
+      expect(() => validateProviderDeal({ ...deal, priceOriginal: invalidPrice })).toThrow(
+        'Input is invalid',
+      );
+    }
+    expect(() =>
+      validateProviderDeal({ ...deal, offerUrl: 'javascript:alert(1)' }),
+    ).toThrow('Input is invalid');
+    const malformedSensitiveUrl = 'https://bad host.example/path?token=private-value';
+    try {
+      validateProviderDeal({ ...deal, offerUrl: malformedSensitiveUrl });
+      throw new Error('Expected URL validation to fail');
+    } catch (error) {
+      expect(error).toMatchObject({ code: 'INPUT_INVALID' });
+      expect(error instanceof Error ? error.message : String(error)).not.toContain('private-value');
+    }
+  });
+
+  it('retrieves typed capability execution only when enabled, distinguishing disabled and missing capability', async () => {
+    const registry = createProviderRegistry();
+    const listCatalog = async (): Promise<readonly ProviderCatalogItem[]> => [];
+    const listDeals = async (): Promise<readonly ProviderDeal[]> => [];
+    const catalog = { capability: 'catalog' as const, listCatalog };
+    const deal = { capability: 'deal' as const, listDeals };
+    registry.register(definition({ capabilities: ['catalog', 'deal'] }), [catalog, deal]);
+    expect(registry.get('sample-store')).not.toHaveProperty('adapter');
+    expect(registry.setEnabled('sample-store', true)).toBe(true);
+
+    const enabledCatalog: ProviderCapabilityAccess<'catalog'> = registry.getCapability(
+      'sample-store',
+      'catalog',
+    );
+    expect(enabledCatalog.status).toBe('available');
+    if (
+      enabledCatalog.status === 'available' &&
+      enabledCatalog.adapter.capability === 'catalog'
+    ) {
+      expect(await enabledCatalog.adapter.listCatalog()).toEqual([]);
+    }
+    const enabledDeal = registry.getCapability('sample-store', 'deal');
+    expect(enabledDeal.status).toBe('available');
+    if (enabledDeal.status === 'available') {
+      expect(await enabledDeal.adapter.listDeals()).toEqual([]);
+    }
+    expect(registry.getCapability('sample-store', 'library').status).toBe('missing_capability');
+    registry.setEnabled('sample-store', false);
+    expect(registry.getCapability('sample-store', 'catalog').status).toBe('disabled');
+    expect(registry.providersForCapability('catalog')).toHaveLength(1);
   });
 
   it('registers immutable definitions in deterministic order and provides get, list, capability, and enable controls', () => {

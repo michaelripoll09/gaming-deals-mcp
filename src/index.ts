@@ -20,6 +20,7 @@ export {
   type ProviderAdapter,
   type ProviderCapability,
   type ProviderCapabilityAdapter,
+  type ProviderCapabilityAccess,
   type ProviderDefinition,
   type ProviderId,
   type ProviderRegistry,
@@ -27,6 +28,14 @@ export {
   type SubscriptionProvider,
   type WishlistProvider,
 } from './providers/registry.js';
+export {
+  providerCatalogItemSchema,
+  providerDealSchema,
+  validateProviderCatalogItem,
+  validateProviderDeal,
+  type ProviderCatalogItem,
+  type ProviderDeal,
+} from './providers/contracts.js';
 export {
   requestProviderJson,
   type ProviderRequestDependencies,

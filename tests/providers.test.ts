@@ -464,6 +464,68 @@ describe('provider metadata and runtime registry', () => {
     }
   });
 
+  it('preserves caller-owned stateful provider implementations behind stable frozen facades', async () => {
+    const registry = createProviderRegistry();
+    const catalog = {
+      capability: 'catalog' as const,
+      calls: 0,
+      async listCatalog(this: { calls: number }) {
+        this.calls += 1;
+        return [];
+      },
+    };
+    const deal = {
+      capability: 'deal' as const,
+      calls: 0,
+      async listDeals(this: { calls: number }) {
+        this.calls += 1;
+        return [];
+      },
+    };
+    const adapters = [catalog, deal];
+    registry.register(definition({ capabilities: ['catalog', 'deal'] }), adapters);
+
+    adapters.splice(0, adapters.length);
+
+    const catalogAccess = registry.getCapability('sample-store', 'catalog');
+    expect(catalogAccess.status).toBe('disabled');
+    registry.setEnabled('sample-store', true);
+    const enabledCatalog = registry.getCapability('sample-store', 'catalog');
+    expect(enabledCatalog.status).toBe('available');
+    if (enabledCatalog.status === 'available') {
+      const facade = enabledCatalog.adapter;
+      expect(Object.isFrozen(facade)).toBe(true);
+      const stableCatalog = registry.getCapability('sample-store', 'catalog');
+      if (stableCatalog.status === 'available') {
+        expect(facade).toBe(stableCatalog.adapter);
+      }
+      await facade.listCatalog();
+      expect(catalog.calls).toBe(1);
+      await facade.listCatalog();
+      expect(catalog.calls).toBe(2);
+      Reflect.set(catalog, 'capability', 'deal');
+      expect(facade.capability).toBe('catalog');
+    }
+
+    const enabledDeal = registry.getCapability('sample-store', 'deal');
+    expect(enabledDeal.status).toBe('available');
+    if (enabledDeal.status === 'available') {
+      const facade = enabledDeal.adapter;
+      expect(Object.isFrozen(facade)).toBe(true);
+      await facade.listDeals();
+      expect(deal.calls).toBe(1);
+      await facade.listDeals();
+      expect(deal.calls).toBe(2);
+      Reflect.set(deal, 'capability', 'catalog');
+      expect(facade.capability).toBe('deal');
+    }
+    expect(Object.isFrozen(catalog)).toBe(false);
+    expect(Object.isFrozen(deal)).toBe(false);
+    expect(Object.isFrozen(catalog)).toBe(false);
+    expect(Object.isFrozen(deal)).toBe(false);
+    expect(registry.getCapability('sample-store', 'library').status).toBe('missing_capability');
+  });
+
   it('retrieves typed capability execution only when enabled, distinguishing disabled and missing capability', async () => {
     const registry = createProviderRegistry();
     const listCatalog = async (): Promise<readonly ProviderCatalogItem[]> => [];

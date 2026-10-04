@@ -203,6 +203,23 @@ export interface ProviderRegistry {
   ): boolean;
 }
 
+function stableAdapterBinding(binding: ProviderCapabilityAdapter): ProviderCapabilityAdapter {
+  switch (binding.capability) {
+    case 'catalog':
+      return Object.freeze({
+        capability: binding.capability,
+        listCatalog: binding.listCatalog.bind(binding),
+      });
+    case 'deal':
+      return Object.freeze({
+        capability: binding.capability,
+        listDeals: binding.listDeals.bind(binding),
+      });
+    default:
+      return Object.freeze({ capability: binding.capability });
+  }
+}
+
 export function createProviderRegistry(): ProviderRegistry {
   const providers = new Map<
     ProviderId,
@@ -314,7 +331,7 @@ export function createProviderRegistry(): ProviderRegistry {
       ) {
         throw new AppError('INPUT_INVALID', 'Provider capabilities do not match its adapter');
       }
-      const stableAdapter = Object.freeze(adapter.map((binding) => Object.freeze(binding)));
+      const stableAdapter = Object.freeze(adapter.map(stableAdapterBinding));
       const entry = {
         definition: stableDefinition,
         adapter: stableAdapter,

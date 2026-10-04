@@ -443,9 +443,16 @@ describe('provider metadata and runtime registry', () => {
     expect(() => validateProviderCatalogItem({ ...item, canonicalProductId: 'product-1' })).toThrow(
       'Input is invalid',
     );
+    expect(
+      validateProviderDeal({
+        ...deal,
+        priceOriginal: { amountMinor: 0, currency: 'USD' },
+      }).priceOriginal.amountMinor,
+    ).toBe(0);
     for (const invalidPrice of [
       { amountMinor: 1, currency: 'ZZZ' },
       { amountMinor: Number.MAX_SAFE_INTEGER + 1, currency: 'USD' },
+      { amountMinor: -1, currency: 'USD' },
     ]) {
       expect(() => validateProviderDeal({ ...deal, priceOriginal: invalidPrice })).toThrow(
         'Input is invalid',

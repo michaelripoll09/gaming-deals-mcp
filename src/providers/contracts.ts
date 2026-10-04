@@ -41,7 +41,7 @@ const providerDealInputSchema = z
     providerProductId: z.string().trim().min(1),
     priceOriginal: z
       .object({
-        amountMinor: z.number().int().safe(),
+        amountMinor: z.number().int().safe().nonnegative(),
         currency: z.string().regex(/^[A-Z]{3}$/),
       })
       .strict()

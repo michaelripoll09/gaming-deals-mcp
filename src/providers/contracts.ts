@@ -27,6 +27,11 @@ const offerUrlSchema = z
   .trim()
   .min(1)
   .refine((value) => {
+    for (const character of value) {
+      const code = character.charCodeAt(0);
+      if (code <= 0x1f || code === 0x7f) return false;
+    }
+
     try {
       const url = new URL(value);
       return (

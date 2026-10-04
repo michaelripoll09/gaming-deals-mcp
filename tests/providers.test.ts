@@ -503,6 +503,24 @@ describe('provider-native catalog and deal contracts', () => {
     }
   });
 
+  it('rejects offer URLs with embedded control characters using safe input errors', () => {
+    for (const offerUrl of [
+      'https://store.exa\nmple/offer',
+      'https://store.exa\rmple/offer',
+      'https://store.exa\tmple/offer',
+    ]) {
+      let capturedError: unknown;
+      try {
+        validateProviderDeal(deal({ offerUrl }));
+      } catch (error) {
+        capturedError = error;
+      }
+
+      expect(capturedError).toMatchObject({ code: 'INPUT_INVALID', message: 'Input is invalid' });
+      expect(String(capturedError)).not.toContain(offerUrl);
+    }
+  });
+
   it('returns safe errors for embedded credential URLs', () => {
     let capturedError: unknown;
     try {

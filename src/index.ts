@@ -28,6 +28,14 @@ export {
   type WishlistProvider,
 } from './providers/registry.js';
 export {
+  providerCatalogItemSchema,
+  providerDealSchema,
+  validateProviderCatalogItem,
+  validateProviderDeal,
+  type ProviderCatalogItem,
+  type ProviderDeal,
+} from './providers/contracts.js';
+export {
   requestProviderJson,
   type ProviderRequestDependencies,
   type ProviderRequestOptions,

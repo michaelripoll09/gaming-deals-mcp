@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { validateProviderCatalogItem, validateProviderDeal } from '../src/providers/contracts.js';
 import {
   capabilityNames,
   createProviderRegistry,
@@ -391,5 +392,127 @@ describe('provider metadata and runtime registry', () => {
     expect(registry.setEnabled('a-store', false)).toBe(true);
     expect(registry.get('a-store').enabled).toBe(false);
     expect(registry.enabledProvidersForCapability('catalog')).toHaveLength(0);
+  });
+});
+
+describe('provider-native catalog and deal contracts', () => {
+  const catalogItem = {
+    providerProductId: ' game-1 ',
+    title: ' Example Game ',
+    platform: { family: 'pc' as const, variant: ' Steam Deck ' },
+    distribution: 'digital_storefront' as const,
+  };
+
+  const deal = (overrides: Record<string, unknown> = {}) => ({
+    providerOfferId: ' offer-1 ',
+    providerProductId: ' game-1 ',
+    priceOriginal: { amountMinor: 1299, currency: 'USD' },
+    offerUrl: 'https://store.example/offer',
+    ...overrides,
+  });
+
+  it('trims valid catalog item text and freezes the item and nested platform', () => {
+    const result = validateProviderCatalogItem(catalogItem);
+
+    expect(result).toEqual({
+      providerProductId: 'game-1',
+      title: 'Example Game',
+      platform: { family: 'pc', variant: 'Steam Deck' },
+      distribution: 'digital_storefront',
+    });
+    expect(Object.isFrozen(result)).toBe(true);
+    expect(Object.isFrozen(result.platform)).toBe(true);
+  });
+
+  it('rejects empty catalog IDs, titles, platform variants, and extra keys', () => {
+    expect(() =>
+      validateProviderCatalogItem({ ...catalogItem, providerProductId: '  ' }),
+    ).toThrow();
+    expect(() => validateProviderCatalogItem({ ...catalogItem, title: '  ' })).toThrow();
+    expect(() =>
+      validateProviderCatalogItem({
+        ...catalogItem,
+        platform: { family: 'pc', variant: '  ' },
+      }),
+    ).toThrow();
+    expect(() => validateProviderCatalogItem({ ...catalogItem, extra: true })).toThrow();
+    expect(() =>
+      validateProviderCatalogItem({
+        ...catalogItem,
+        platform: { family: 'pc', extra: true },
+      }),
+    ).toThrow();
+  });
+
+  it('trims deal IDs, accepts HTTP and HTTPS, and freezes deal and Money output', () => {
+    for (const offerUrl of ['http://store.example/offer', 'https://store.example/offer']) {
+      const result = validateProviderDeal(deal({ offerUrl }));
+
+      expect(result.providerOfferId).toBe('offer-1');
+      expect(result.providerProductId).toBe('game-1');
+      expect(result.offerUrl).toBe(offerUrl);
+      expect(result.priceOriginal).toEqual({ amountMinor: 1299, currency: 'USD' });
+      expect(Object.isFrozen(result)).toBe(true);
+      expect(Object.isFrozen(result.priceOriginal)).toBe(true);
+    }
+  });
+
+  it('accepts zero and rejects negative, unsafe, malformed-currency, and extra price data', () => {
+    expect(
+      validateProviderDeal(deal({ priceOriginal: { amountMinor: 0, currency: 'USD' } }))
+        .priceOriginal.amountMinor,
+    ).toBe(0);
+    expect(() =>
+      validateProviderDeal(deal({ priceOriginal: { amountMinor: -1, currency: 'USD' } })),
+    ).toThrow();
+    expect(() =>
+      validateProviderDeal(
+        deal({ priceOriginal: { amountMinor: Number.MAX_SAFE_INTEGER + 1, currency: 'USD' } }),
+      ),
+    ).toThrow();
+    expect(() =>
+      validateProviderDeal(deal({ priceOriginal: { amountMinor: 1, currency: 'usd' } })),
+    ).toThrow();
+    expect(() =>
+      validateProviderDeal(deal({ priceOriginal: { amountMinor: 1, currency: 'ZZZ' } })),
+    ).toThrow();
+    expect(() =>
+      validateProviderDeal(
+        deal({ priceOriginal: { amountMinor: 1, currency: 'USD', extra: true } }),
+      ),
+    ).toThrow();
+  });
+
+  it('rejects blank deal IDs and strict-object extras', () => {
+    expect(() => validateProviderDeal(deal({ providerOfferId: '  ' }))).toThrow();
+    expect(() => validateProviderDeal(deal({ providerProductId: '  ' }))).toThrow();
+    expect(() => validateProviderDeal(deal({ extra: true }))).toThrow();
+  });
+
+  it('rejects non-HTTP(S) and malformed URLs with safe input errors', () => {
+    for (const offerUrl of ['javascript:alert(1)', 'http://[']) {
+      let capturedError: unknown;
+      try {
+        validateProviderDeal(deal({ offerUrl }));
+      } catch (error) {
+        capturedError = error;
+      }
+
+      expect(capturedError).toMatchObject({ code: 'INPUT_INVALID', message: 'Input is invalid' });
+      expect(String(capturedError)).not.toContain(offerUrl);
+    }
+  });
+
+  it('returns safe errors for embedded credential URLs', () => {
+    let capturedError: unknown;
+    try {
+      validateProviderDeal(deal({ offerUrl: 'https://user:secret@store.example/offer' }));
+    } catch (error) {
+      capturedError = error;
+    }
+
+    expect(capturedError).toMatchObject({ code: 'INPUT_INVALID', message: 'Input is invalid' });
+    expect(String(capturedError)).not.toContain('user');
+    expect(String(capturedError)).not.toContain('secret');
   });
 });

@@ -1,4 +1,5 @@
 import { AppError } from '../errors.js';
+import type { ProviderCatalogItem, ProviderDeal } from './contracts.js';
 import { platformFamilySchema, type PlatformFamily } from '../catalog.js';
 import { z } from 'zod';
 
@@ -116,9 +117,11 @@ export type ProviderDefinition = z.infer<typeof providerDefinitionSchema>;
 
 export interface DealProvider {
   readonly capability: 'deal';
+  listDeals(signal?: AbortSignal): Promise<readonly ProviderDeal[]>;
 }
 export interface CatalogProvider {
   readonly capability: 'catalog';
+  listCatalog(signal?: AbortSignal): Promise<readonly ProviderCatalogItem[]>;
 }
 export interface LibraryProvider {
   readonly capability: 'library';
@@ -139,6 +142,18 @@ export interface NotificationProvider {
   readonly capability: 'notification';
 }
 
+export type DealCapabilityMarker = Pick<DealProvider, 'capability'>;
+export type CatalogCapabilityMarker = Pick<CatalogProvider, 'capability'>;
+
+export type ProviderCapabilityMarker =
+  | DealCapabilityMarker
+  | CatalogCapabilityMarker
+  | LibraryProvider
+  | WishlistProvider
+  | SubscriptionProvider
+  | CurrencyProvider
+  | PhysicalStockProvider
+  | NotificationProvider;
 export type ProviderCapabilityAdapter =
   | DealProvider
   | CatalogProvider
@@ -150,6 +165,47 @@ export type ProviderCapabilityAdapter =
   | NotificationProvider;
 export type ProviderAdapter = readonly ProviderCapabilityAdapter[];
 
+function markerSnapshot(binding: ProviderCapabilityAdapter): ProviderCapabilityMarker {
+  switch (binding.capability) {
+    case 'deal':
+      return Object.freeze({ capability: 'deal' });
+    case 'catalog':
+      return Object.freeze({ capability: 'catalog' });
+    case 'library':
+      return Object.freeze({ capability: 'library' });
+    case 'wishlist':
+      return Object.freeze({ capability: 'wishlist' });
+    case 'subscription':
+      return Object.freeze({ capability: 'subscription' });
+    case 'currency':
+      return Object.freeze({ capability: 'currency' });
+    case 'physical_stock':
+      return Object.freeze({ capability: 'physical_stock' });
+    case 'notification':
+      return Object.freeze({ capability: 'notification' });
+  }
+}
+
+function isCatalogProvider(binding: ProviderCapabilityAdapter): binding is CatalogProvider {
+  return (
+    binding.capability === 'catalog' &&
+    'listCatalog' in binding &&
+    typeof binding.listCatalog === 'function'
+  );
+}
+
+function isDealProvider(binding: ProviderCapabilityAdapter): binding is DealProvider {
+  return (
+    binding.capability === 'deal' &&
+    'listDeals' in binding &&
+    typeof binding.listDeals === 'function'
+  );
+}
+
+function assertEnabled(enabled: boolean): void {
+  if (!enabled) throw new AppError('PROVIDER_UNAVAILABLE', 'Provider is unavailable');
+}
+
 type DeepReadonly<T> = T extends readonly (infer U)[]
   ? readonly DeepReadonly<U>[]
   : T extends object
@@ -158,9 +214,18 @@ type DeepReadonly<T> = T extends readonly (infer U)[]
 
 export interface RegisteredProvider {
   readonly definition: DeepReadonly<ProviderDefinition>;
-  readonly adapter: ProviderAdapter;
+  readonly adapter: readonly ProviderCapabilityMarker[];
   readonly enabled: boolean;
 }
+
+export type ProviderCapabilityAccess<TAdapter> =
+  | {
+      readonly status: 'available';
+      readonly provider: RegisteredProvider;
+      readonly adapter: TAdapter;
+    }
+  | { readonly status: 'disabled'; readonly provider: RegisteredProvider }
+  | { readonly status: 'missing_capability'; readonly provider: RegisteredProvider };
 
 export interface ProviderRegistry {
   register(definition: ProviderDefinition, adapter: ProviderAdapter): RegisteredProvider;
@@ -168,6 +233,39 @@ export interface ProviderRegistry {
   list(): readonly RegisteredProvider[];
   providersForCapability(capability: ProviderCapability): readonly RegisteredProvider[];
   enabledProvidersForCapability(capability: ProviderCapability): readonly RegisteredProvider[];
+  getCapability(
+    providerId: ProviderId,
+    capability: 'catalog',
+  ): ProviderCapabilityAccess<CatalogProvider>;
+  getCapability(providerId: ProviderId, capability: 'deal'): ProviderCapabilityAccess<DealProvider>;
+  getCapability(
+    providerId: ProviderId,
+    capability: 'library',
+  ): ProviderCapabilityAccess<LibraryProvider>;
+  getCapability(
+    providerId: ProviderId,
+    capability: 'wishlist',
+  ): ProviderCapabilityAccess<WishlistProvider>;
+  getCapability(
+    providerId: ProviderId,
+    capability: 'subscription',
+  ): ProviderCapabilityAccess<SubscriptionProvider>;
+  getCapability(
+    providerId: ProviderId,
+    capability: 'currency',
+  ): ProviderCapabilityAccess<CurrencyProvider>;
+  getCapability(
+    providerId: ProviderId,
+    capability: 'physical_stock',
+  ): ProviderCapabilityAccess<PhysicalStockProvider>;
+  getCapability(
+    providerId: ProviderId,
+    capability: 'notification',
+  ): ProviderCapabilityAccess<NotificationProvider>;
+  getCapability(
+    providerId: ProviderId,
+    capability: ProviderCapability,
+  ): ProviderCapabilityAccess<ProviderCapabilityAdapter>;
   supports(
     providerId: ProviderId,
     capability: ProviderCapability,
@@ -185,7 +283,8 @@ export function createProviderRegistry(): ProviderRegistry {
     ProviderId,
     {
       definition: DeepReadonly<ProviderDefinition>;
-      adapter: ProviderAdapter;
+      adapter: readonly ProviderCapabilityMarker[];
+      facades: { catalog?: CatalogProvider; deal?: DealProvider };
       enabled: boolean;
     }
   >();
@@ -230,7 +329,7 @@ export function createProviderRegistry(): ProviderRegistry {
 
   function registered(entry: {
     definition: DeepReadonly<ProviderDefinition>;
-    adapter: ProviderAdapter;
+    adapter: readonly ProviderCapabilityMarker[];
     enabled: boolean;
   }): RegisteredProvider {
     return Object.freeze({
@@ -240,11 +339,102 @@ export function createProviderRegistry(): ProviderRegistry {
     });
   }
 
+  function getCapability(
+    providerId: ProviderId,
+    capability: 'catalog',
+  ): ProviderCapabilityAccess<CatalogProvider>;
+  function getCapability(
+    providerId: ProviderId,
+    capability: 'deal',
+  ): ProviderCapabilityAccess<DealProvider>;
+  function getCapability(
+    providerId: ProviderId,
+    capability: 'library',
+  ): ProviderCapabilityAccess<LibraryProvider>;
+  function getCapability(
+    providerId: ProviderId,
+    capability: 'wishlist',
+  ): ProviderCapabilityAccess<WishlistProvider>;
+  function getCapability(
+    providerId: ProviderId,
+    capability: 'subscription',
+  ): ProviderCapabilityAccess<SubscriptionProvider>;
+  function getCapability(
+    providerId: ProviderId,
+    capability: 'currency',
+  ): ProviderCapabilityAccess<CurrencyProvider>;
+  function getCapability(
+    providerId: ProviderId,
+    capability: 'physical_stock',
+  ): ProviderCapabilityAccess<PhysicalStockProvider>;
+  function getCapability(
+    providerId: ProviderId,
+    capability: 'notification',
+  ): ProviderCapabilityAccess<NotificationProvider>;
+  function getCapability(
+    providerId: ProviderId,
+    capability: ProviderCapability,
+  ): ProviderCapabilityAccess<ProviderCapabilityAdapter>;
+  function getCapability(
+    providerId: ProviderId,
+    capability: ProviderCapability,
+  ):
+    | ProviderCapabilityAccess<CatalogProvider>
+    | ProviderCapabilityAccess<DealProvider>
+    | ProviderCapabilityAccess<LibraryProvider>
+    | ProviderCapabilityAccess<WishlistProvider>
+    | ProviderCapabilityAccess<SubscriptionProvider>
+    | ProviderCapabilityAccess<CurrencyProvider>
+    | ProviderCapabilityAccess<PhysicalStockProvider>
+    | ProviderCapabilityAccess<NotificationProvider> {
+    const entry = getEntry(providerId);
+    const provider = registered(entry);
+    if (!entry.definition.capabilities.includes(capability))
+      return { status: 'missing_capability', provider };
+    if (!entry.enabled) return { status: 'disabled', provider };
+    switch (capability) {
+      case 'catalog':
+        return entry.facades.catalog === undefined
+          ? { status: 'missing_capability', provider }
+          : { status: 'available', provider, adapter: entry.facades.catalog };
+      case 'deal':
+        return entry.facades.deal === undefined
+          ? { status: 'missing_capability', provider }
+          : { status: 'available', provider, adapter: entry.facades.deal };
+      case 'library':
+        return { status: 'available', provider, adapter: { capability: 'library' } };
+      case 'wishlist':
+        return { status: 'available', provider, adapter: { capability: 'wishlist' } };
+      case 'subscription':
+        return { status: 'available', provider, adapter: { capability: 'subscription' } };
+      case 'currency':
+        return { status: 'available', provider, adapter: { capability: 'currency' } };
+      case 'physical_stock':
+        return { status: 'available', provider, adapter: { capability: 'physical_stock' } };
+      case 'notification':
+        return { status: 'available', provider, adapter: { capability: 'notification' } };
+    }
+  }
+
   return {
     register(definition, adapter) {
       const stableDefinition = snapshot(definition);
       if (providers.has(stableDefinition.providerId)) {
         throw new AppError('INPUT_INVALID', 'Provider ID is already registered');
+      }
+      if (
+        !Array.isArray(adapter) ||
+        adapter.some(
+          (binding) =>
+            typeof binding !== 'object' ||
+            binding === null ||
+            !('capability' in binding) ||
+            !capabilitySchema.safeParse(binding.capability).success ||
+            (binding.capability === 'catalog' && !isCatalogProvider(binding)) ||
+            (binding.capability === 'deal' && !isDealProvider(binding)),
+        )
+      ) {
+        throw new AppError('INPUT_INVALID', 'Provider capabilities do not match its adapter');
       }
       const declared = new Set(stableDefinition.capabilities);
       const implemented = new Set(adapter.map((binding) => binding.capability));
@@ -255,12 +445,37 @@ export function createProviderRegistry(): ProviderRegistry {
       ) {
         throw new AppError('INPUT_INVALID', 'Provider capabilities do not match its adapter');
       }
-      const stableAdapter = Object.freeze(adapter.map((binding) => Object.freeze(binding)));
+      const stableAdapter: readonly ProviderCapabilityMarker[] = Object.freeze(
+        adapter.map(markerSnapshot),
+      );
+      const facades: { catalog?: CatalogProvider; deal?: DealProvider } = {};
       const entry = {
         definition: stableDefinition,
         adapter: stableAdapter,
+        facades,
         enabled: stableDefinition.enabledByDefault,
       };
+      for (const binding of adapter) {
+        if (isCatalogProvider(binding)) {
+          const listCatalog = binding.listCatalog;
+          facades.catalog = Object.freeze({
+            capability: 'catalog',
+            async listCatalog(signal?: AbortSignal) {
+              assertEnabled(entry.enabled);
+              return listCatalog.call(binding, signal);
+            },
+          });
+        } else if (isDealProvider(binding)) {
+          const listDeals = binding.listDeals;
+          facades.deal = Object.freeze({
+            capability: 'deal',
+            async listDeals(signal?: AbortSignal) {
+              assertEnabled(entry.enabled);
+              return listDeals.call(binding, signal);
+            },
+          });
+        }
+      }
       providers.set(stableDefinition.providerId, entry);
       return registered(entry);
     },
@@ -290,6 +505,7 @@ export function createProviderRegistry(): ProviderRegistry {
         this.providersForCapability(capability).filter((provider) => provider.enabled),
       );
     },
+    getCapability,
     supports(providerId, capability, platform) {
       const definition = getEntry(providerId).definition;
       return (

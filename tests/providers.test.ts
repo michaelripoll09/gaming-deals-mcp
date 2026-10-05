@@ -1,11 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { validateProviderCatalogItem, validateProviderDeal } from '../src/providers/contracts.js';
+import {
+  validateProviderCatalogItem,
+  validateProviderDeal,
+  type ProviderCatalogItem,
+  type ProviderDeal,
+} from '../src/providers/contracts.js';
 import {
   capabilityNames,
   createProviderRegistry,
   providerDefinitionSchema,
   providerIdSchema,
+  type CatalogCapabilityMarker,
   type CatalogProvider,
+  type DealCapabilityMarker,
   type DealProvider,
   type CurrencyProvider,
   type LibraryProvider,
@@ -87,17 +94,21 @@ function definition(overrides: Partial<ProviderDefinition> = {}): ProviderDefini
 type IsAssignable<From, To> = [From] extends [To] ? true : false;
 type Assert<T extends true> = T;
 type AssertNot<T extends false> = T;
+type MarkerOnlyCatalog = { readonly capability: 'catalog' };
+type MarkerOnlyDeal = { readonly capability: 'deal' };
 type ProviderContractsHaveExactMarkers = [
-  Assert<IsAssignable<{ readonly capability: 'deal' }, DealProvider>>,
-  Assert<IsAssignable<{ readonly capability: 'catalog' }, CatalogProvider>>,
+  Assert<IsAssignable<MarkerOnlyCatalog, CatalogCapabilityMarker>>,
+  Assert<IsAssignable<MarkerOnlyDeal, DealCapabilityMarker>>,
   Assert<IsAssignable<{ readonly capability: 'library' }, LibraryProvider>>,
   Assert<IsAssignable<{ readonly capability: 'wishlist' }, WishlistProvider>>,
   Assert<IsAssignable<{ readonly capability: 'subscription' }, SubscriptionProvider>>,
   Assert<IsAssignable<{ readonly capability: 'currency' }, CurrencyProvider>>,
   Assert<IsAssignable<{ readonly capability: 'physical_stock' }, PhysicalStockProvider>>,
   Assert<IsAssignable<{ readonly capability: 'notification' }, NotificationProvider>>,
-  AssertNot<IsAssignable<{ readonly capability: 'deal' }, CatalogProvider>>,
-  AssertNot<IsAssignable<{ readonly capability: 'catalog' }, DealProvider>>,
+  AssertNot<IsAssignable<MarkerOnlyCatalog, CatalogProvider>>,
+  AssertNot<IsAssignable<MarkerOnlyDeal, DealProvider>>,
+  AssertNot<IsAssignable<MarkerOnlyCatalog, ProviderAdapter[number]>>,
+  AssertNot<IsAssignable<MarkerOnlyDeal, ProviderAdapter[number]>>,
 ];
 const providerContractsHaveExactMarkers: ProviderContractsHaveExactMarkers = [
   true,
@@ -110,9 +121,22 @@ const providerContractsHaveExactMarkers: ProviderContractsHaveExactMarkers = [
   true,
   false,
   false,
+  false,
+  false,
 ];
 
-const catalogBinding: ProviderAdapter[number] = { capability: 'catalog' };
+const catalogBinding: CatalogProvider = {
+  capability: 'catalog',
+  async listCatalog() {
+    return [];
+  },
+};
+const dealBinding: DealProvider = {
+  capability: 'deal',
+  async listDeals() {
+    return [];
+  },
+};
 const catalogAdapter: ProviderAdapter = [catalogBinding];
 
 describe('provider metadata and runtime registry', () => {
@@ -126,6 +150,8 @@ describe('provider metadata and runtime registry', () => {
       true,
       true,
       true,
+      false,
+      false,
       false,
       false,
     ]);
@@ -304,7 +330,7 @@ describe('provider metadata and runtime registry', () => {
   it('rejects duplicate and definition-mismatched adapter capabilities at registry registration', () => {
     const registry = createProviderRegistry();
     expect(() => registry.register(definition(), [catalogBinding, catalogBinding])).toThrow();
-    expect(() => registry.register(definition(), [{ capability: 'deal' }])).toThrow();
+    expect(() => registry.register(definition(), [dealBinding])).toThrow();
   });
 
   it('requires explicit experimental opt-in to enable experimental or incomplete providers', () => {
@@ -362,6 +388,112 @@ describe('provider metadata and runtime registry', () => {
     expect(registry.setEnabled('prohibited-store', true, { explicitExperimentalOptIn: true })).toBe(
       false,
     );
+  });
+
+  it('registers executable catalog and deal facades behind capability access', async () => {
+    const registry = createProviderRegistry();
+    const catalogResult: readonly ProviderCatalogItem[] = [
+      validateProviderCatalogItem({
+        providerProductId: 'product-1',
+        title: 'Example Game',
+        platform: { family: 'pc' },
+        distribution: 'digital_storefront',
+      }),
+    ];
+    const dealResult: readonly ProviderDeal[] = [
+      validateProviderDeal({
+        providerOfferId: 'offer-1',
+        providerProductId: 'product-1',
+        priceOriginal: { amountMinor: 1299, currency: 'USD' },
+        offerUrl: 'https://store.example/offer',
+      }),
+    ];
+    const callerAdapter: Array<CatalogProvider | DealProvider> = [];
+    const catalogBinding: CatalogProvider & {
+      calls: number;
+      listCatalog(signal?: AbortSignal): Promise<readonly ProviderCatalogItem[]>;
+    } = {
+      capability: 'catalog',
+      calls: 0,
+      async listCatalog(signal?: AbortSignal): Promise<readonly ProviderCatalogItem[]> {
+        expect(signal).toBeInstanceOf(AbortSignal);
+        this.calls += 1;
+        return catalogResult;
+      },
+    };
+    const dealBinding: DealProvider & {
+      calls: number;
+      listDeals(signal?: AbortSignal): Promise<readonly ProviderDeal[]>;
+    } = {
+      capability: 'deal',
+      calls: 0,
+      async listDeals(signal?: AbortSignal): Promise<readonly ProviderDeal[]> {
+        expect(signal).toBeInstanceOf(AbortSignal);
+        this.calls += 1;
+        return dealResult;
+      },
+    };
+    callerAdapter.push(catalogBinding, dealBinding);
+    const registered = registry.register(
+      definition({ capabilities: ['catalog', 'deal'], enabledByDefault: true }),
+      callerAdapter,
+    );
+    callerAdapter.pop();
+    expect(Object.isFrozen(catalogBinding)).toBe(false);
+    expect(Object.isFrozen(dealBinding)).toBe(false);
+
+    const access = registry.getCapability('sample-store', 'catalog');
+    expect(access.status).toBe('available');
+    if (access.status !== 'available') throw new Error('Catalog capability unavailable');
+    expect(access.provider.enabled).toBe(true);
+    const retainedCatalog: CatalogProvider = access.adapter;
+    const dealAccess = registry.getCapability('sample-store', 'deal');
+    expect(dealAccess.status).toBe('available');
+    if (dealAccess.status !== 'available') throw new Error('Deal capability unavailable');
+    const retainedDeal = dealAccess.adapter;
+    const signal = new AbortController().signal;
+    expect(Object.isFrozen(retainedCatalog)).toBe(true);
+    expect(Object.isFrozen(retainedDeal)).toBe(true);
+    expect(registered.adapter[0]).not.toHaveProperty('listCatalog');
+    expect(registered.adapter[1]).not.toHaveProperty('listDeals');
+    expect(Object.isFrozen(registry.get('sample-store').adapter[0])).toBe(true);
+    expect(registry.get('sample-store').adapter[0]?.capability).toBe('catalog');
+    expect(registry.get('sample-store').adapter[0]).not.toHaveProperty('listCatalog');
+    expect(registry.list()[0]?.adapter[1]).not.toHaveProperty('listDeals');
+    expect(await retainedCatalog.listCatalog(signal)).toBe(catalogResult);
+    expect(await retainedCatalog.listCatalog(signal)).toBe(catalogResult);
+    expect(await retainedDeal.listDeals(signal)).toBe(dealResult);
+    expect(await retainedDeal.listDeals(signal)).toBe(dealResult);
+    expect(catalogBinding.calls).toBe(2);
+    expect(dealBinding.calls).toBe(2);
+
+    expect(registry.setEnabled('sample-store', false)).toBe(true);
+    expect(registry.getCapability('sample-store', 'catalog').status).toBe('disabled');
+    expect(registry.getCapability('sample-store', 'deal').status).toBe('disabled');
+    await expect(retainedCatalog.listCatalog(signal)).rejects.toMatchObject({
+      code: 'PROVIDER_UNAVAILABLE',
+    });
+    await expect(retainedDeal.listDeals(signal)).rejects.toMatchObject({
+      code: 'PROVIDER_UNAVAILABLE',
+    });
+    expect(catalogBinding.calls).toBe(2);
+    expect(dealBinding.calls).toBe(2);
+    expect(registry.setEnabled('sample-store', true)).toBe(true);
+    expect(registry.getCapability('sample-store', 'catalog').status).toBe('available');
+    expect(registry.getCapability('sample-store', 'deal').status).toBe('available');
+    expect(await retainedCatalog.listCatalog(signal)).toBe(catalogResult);
+    expect(await retainedDeal.listDeals(signal)).toBe(dealResult);
+    expect(catalogBinding.calls).toBe(3);
+    expect(dealBinding.calls).toBe(3);
+  });
+
+  it('reports missing declared capability separately from disabled and unknown providers', () => {
+    const registry = createProviderRegistry();
+    registry.register(definition(), catalogAdapter);
+    expect(registry.getCapability('sample-store', 'deal').status).toBe('missing_capability');
+    expect(registry.getCapability('sample-store', 'catalog').status).toBe('disabled');
+    expect(() => registry.getCapability('unknown-store', 'catalog')).toThrow('Input is invalid');
+    expect(registry.getCapability('sample-store', 'library').status).toBe('missing_capability');
   });
 
   it('registers immutable definitions in deterministic order and provides get, list, capability, and enable controls', () => {
